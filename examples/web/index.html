@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Roc WASI Web Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+
+        header {
+            padding: 1.5rem;
+            text-align: center;
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+        }
+
+        main {
+            flex: 1;
+            padding: 2rem clamp(1rem, 4vw, 4rem);
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 1.5rem;
+        }
+
+        section {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            box-shadow: 0 15px 35px rgba(15, 23, 42, 0.45);
+            flex: 1 1 0;
+            min-width: 0;
+        }
+
+        section.console {
+            flex: 2 1 0;
+        }
+
+        h1, h2 {
+            margin: 0 0 0.75rem;
+            font-weight: 600;
+        }
+
+        p {
+            margin: 0 0 0.5rem;
+            line-height: 1.5;
+        }
+
+        code {
+            font-family: "SFMono-Regular", Consolas, Menlo, Monaco, monospace;
+            background: rgba(15, 23, 42, 0.6);
+            padding: 0.15rem 0.35rem;
+            border-radius: 0.35rem;
+        }
+
+        pre {
+            background: #0f172a;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            border: 1px solid #1f2f46;
+            overflow: auto;
+            font-size: 0.9rem;
+            min-height: 260px;
+        }
+
+        .control {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+            margin: 0.75rem 0 1rem;
+            font-size: 0.95rem;
+        }
+
+        input[type="text"] {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 0.5rem;
+            padding: 0.6rem 0.75rem;
+            color: inherit;
+            font: inherit;
+        }
+
+        button {
+            appearance: none;
+            border: none;
+            border-radius: 0.5rem;
+            padding: 0.75rem 1.25rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            background: linear-gradient(120deg, #6366f1, #8b5cf6);
+            color: #fff;
+            box-shadow: 0 12px 20px rgba(99, 102, 241, 0.3);
+            transition: transform 150ms ease, box-shadow 150ms ease;
+        }
+
+        button:active {
+            transform: translateY(1px);
+            box-shadow: 0 8px 14px rgba(99, 102, 241, 0.3);
+        }
+
+        footer {
+            text-align: center;
+            padding: 1rem;
+            font-size: 0.9rem;
+            border-top: 1px solid #334155;
+            background: #111827;
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Roc WASI → Browser Demo</h1>
+    <p>A minimal shell for running your Roc WASI binaries through a JS WASI shim.</p>
+</header>
+
+<main>
+    <section>
+        <h2>How it works</h2>
+        <p>This page will fetch the Roc-generated <code>.wasm</code>, create a WASI environment in JavaScript,
+            and execute the module completely in-browser. Console output will appear below.</p>
+        <label class="control">
+            <span>WASM URL</span>
+            <input id="wasmUrl" type="text" value="../cool_skyline.wasm" spellcheck="false"
+                   placeholder="../cool_skyline.wasm">
+        </label>
+        <button id="runButton">Run WASI module</button>
+        <p id="status" style="margin-top: 0.75rem;">Status: idle</p>
+    </section>
+
+    <section class="console">
+        <h2>Console</h2>
+        <pre id="output">Press “Run WASI module” to execute the program…</pre>
+    </section>
+
+    <section>
+        <h2>Next steps</h2>
+        <ol>
+            <li>Build your Roc program for WASI (e.g., <code>rocn build --target=wasm32 cool_skyline.roc</code>).</li>
+            <li>Serve the emitted <code>.wasm</code> next to this page (the default input points at <code>../cool_skyline.wasm</code>).</li>
+            <li>Edit the URL field above or drop in a different module to experiment with the in-browser runner.</li>
+        </ol>
+    </section>
+</main>
+
+<footer>
+    Built with ❤️ for Roc WASI experiments in the browser.
+</footer>
+
+<script type="module">
+    const statusEl = document.getElementById("status");
+    const outputEl = document.getElementById("output");
+    const runButton = document.getElementById("runButton");
+    const wasmInput = document.getElementById("wasmUrl");
+    const DEFAULT_WASM = "../cool_skyline.wasm";
+    const decoder = new TextDecoder();
+
+    class WasiExit extends Error {
+        constructor(code) {
+            super(`WASI exited with code ${code}`);
+            this.code = code;
+        }
+    }
+
+    const wasiState = {
+        memory: null,
+        append(text) {
+            outputEl.textContent += text;
+            outputEl.scrollTop = outputEl.scrollHeight;
+        },
+        dataView() {
+            return new DataView(this.memory.buffer);
+        },
+    };
+
+    const WASI_ERRNO_SUCCESS = 0;
+
+    function writeIoVec(fd, iovsPtr, iovsLen, nwrittenPtr) {
+        let bytesWritten = 0;
+        const view = wasiState.dataView();
+        for (let i = 0; i < iovsLen; i += 1) {
+            const ptr = view.getUint32(iovsPtr + i * 8, true);
+            const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+            const chunk = new Uint8Array(wasiState.memory.buffer, ptr, len);
+            const text = decoder.decode(chunk);
+            wasiState.append(text);
+            bytesWritten += len;
+        }
+        view.setUint32(nwrittenPtr, bytesWritten, true);
+        return WASI_ERRNO_SUCCESS;
+    }
+
+    const wasiImports = {
+        proc_exit(code) {
+            throw new WasiExit(code >>> 0);
+        },
+        fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
+            if (fd !== 1 && fd !== 2) {
+                return WASI_ERRNO_SUCCESS;
+            }
+            return writeIoVec(fd, iovsPtr, iovsLen, nwrittenPtr);
+        },
+        fd_pwrite(fd, iovsPtr, iovsLen, _offsetLow, _offsetHigh, nwrittenPtr) {
+            return wasiImports.fd_write(fd, iovsPtr, iovsLen, nwrittenPtr);
+        },
+        fd_read(_fd, _iovsPtr, _iovsLen, nreadPtr) {
+            const view = wasiState.dataView();
+            view.setUint32(nreadPtr, 0, true);
+            return WASI_ERRNO_SUCCESS;
+        },
+        fd_seek(_fd, _offsetLow, _offsetHigh, _whence, newOffsetPtr) {
+            const view = wasiState.dataView();
+            view.setUint32(newOffsetPtr, 0, true);
+            view.setUint32(newOffsetPtr + 4, 0, true);
+            return WASI_ERRNO_SUCCESS;
+        },
+        fd_filestat_get(_fd, bufPtr) {
+            const statSize = 56; // size of wasi_filestat_t
+            new Uint8Array(wasiState.memory.buffer, bufPtr, statSize).fill(0);
+            return WASI_ERRNO_SUCCESS;
+        },
+    };
+
+    async function runWasiModule() {
+        const wasmUrl = (wasmInput.value || DEFAULT_WASM).trim();
+        outputEl.textContent = "";
+        statusEl.textContent = `Status: fetching ${wasmUrl}…`;
+        runButton.disabled = true;
+        try {
+            const response = await fetch(wasmUrl);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch ${wasmUrl} (HTTP ${response.status})`);
+            }
+            const bytes = await response.arrayBuffer();
+            statusEl.textContent = "Status: instantiating module…";
+            const { instance } = await WebAssembly.instantiate(bytes, {
+                wasi_snapshot_preview1: wasiImports,
+            });
+            wasiState.memory = instance.exports.memory;
+            if (typeof instance.exports._start !== "function") {
+                throw new Error("Export '_start' not found on module.");
+            }
+            statusEl.textContent = "Status: running…";
+            try {
+                instance.exports._start();
+                statusEl.textContent = "Status: completed";
+            } catch (err) {
+                if (err instanceof WasiExit) {
+                    statusEl.textContent = `Status: exited with code ${err.code}`;
+                } else {
+                    throw err;
+                }
+            }
+        } catch (error) {
+            statusEl.textContent = "Status: failed";
+            outputEl.textContent += `\n[error] ${error.message}\n`;
+            console.error(error);
+        } finally {
+            runButton.disabled = false;
+        }
+    }
+
+    runButton.addEventListener("click", () => {
+        runWasiModule();
+    });
+</script>
+</body>
+</html>
