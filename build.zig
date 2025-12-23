@@ -7,6 +7,8 @@ const RocTarget = enum {
     x64mac,
     x64win,
     x64musl,
+    x64glibc,
+    wasm32,
 
     // arm64 (aarch64) targets
     arm64mac,
@@ -18,6 +20,8 @@ const RocTarget = enum {
             .x64mac => .{ .cpu_arch = .x86_64, .os_tag = .macos },
             .x64win => .{ .cpu_arch = .x86_64, .os_tag = .windows, .abi = .gnu },
             .x64musl => .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+            .x64glibc => .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
+            .wasm32 => .{ .cpu_arch = .wasm32, .os_tag = .wasi },
             .arm64mac => .{ .cpu_arch = .aarch64, .os_tag = .macos },
             .arm64win => .{ .cpu_arch = .aarch64, .os_tag = .windows, .abi = .gnu },
             .arm64musl => .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },
@@ -29,6 +33,8 @@ const RocTarget = enum {
             .x64mac => "x64mac",
             .x64win => "x64win",
             .x64musl => "x64musl",
+            .x64glibc => "x64glibc",
+            .wasm32 => "wasm32",
             .arm64mac => "arm64mac",
             .arm64win => "arm64win",
             .arm64musl => "arm64musl",
@@ -48,6 +54,8 @@ const all_targets = [_]RocTarget{
     .x64mac,
     .x64win,
     .x64musl,
+    .x64glibc,
+    .wasm32,
     .arm64mac,
     .arm64win,
     .arm64musl,
@@ -162,7 +170,7 @@ fn detectNativeRocTarget(target: std.Target) ?RocTarget {
             else => null,
         },
         .linux => switch (target.cpu.arch) {
-            .x86_64 => .x64musl,
+            .x86_64 => .x64glibc,
             .aarch64 => .arm64musl,
             else => null,
         },
@@ -211,11 +219,16 @@ fn buildHostLib(
     optimize: std.builtin.OptimizeMode,
     builtins_module: *std.Build.Module,
 ) *std.Build.Step.Compile {
+    const host_source = if (target.result.cpu.arch == .wasm32)
+        "platform/host_wasm.zig"
+    else
+        "platform/host.zig";
+
     const host_lib = b.addLibrary(.{
         .name = "host",
         .linkage = .static,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("platform/host.zig"),
+            .root_source_file = b.path(host_source),
             .target = target,
             .optimize = optimize,
             .strip = optimize != .Debug,

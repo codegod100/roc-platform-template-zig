@@ -40,12 +40,10 @@ fn rocAllocFn(roc_alloc: *builtins.host_abi.RocAlloc, env: *anyopaque) callconv(
     // Return pointer to the user data (after the size metadata)
     roc_alloc.answer = @ptrFromInt(@intFromPtr(base_ptr) + size_storage_bytes);
 
-    std.log.debug("[ALLOC] ptr=0x{x} size={d} align={d}", .{ @intFromPtr(roc_alloc.answer), roc_alloc.length, roc_alloc.alignment });
 }
 
 /// Roc deallocation function with size-tracking metadata
 fn rocDeallocFn(roc_dealloc: *builtins.host_abi.RocDealloc, env: *anyopaque) callconv(.c) void {
-    std.log.debug("[DEALLOC] ptr=0x{x} align={d}", .{ @intFromPtr(roc_dealloc.ptr), roc_dealloc.alignment });
 
     const host: *HostEnv = @ptrCast(@alignCast(env));
     const allocator = host.gpa.allocator();
@@ -116,7 +114,6 @@ fn rocReallocFn(roc_realloc: *builtins.host_abi.RocRealloc, env: *anyopaque) cal
     // Return pointer to the user data (after the size metadata)
     roc_realloc.answer = new_user_ptr;
 
-    std.log.debug("[REALLOC] old=0x{x} new=0x{x} new_size={d}", .{ @intFromPtr(roc_realloc.answer), @intFromPtr(new_user_ptr), roc_realloc.new_length });
 }
 
 /// Roc debug function
@@ -184,7 +181,21 @@ fn main(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
 const RocStr = builtins.str.RocStr;
 const RocList = builtins.list.RocList;
 
-/// Hosted function: Stderr.line! (index 0 - sorted alphabetically)
+/// Hosted function: Random.seed_u64! (index 0 - sorted alphabetically)
+/// Follows RocCall ABI: (ops, ret_ptr, args_ptr)
+/// Returns U64 and takes {} as argument
+fn hostedRandomSeedU64(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+
+    var seed: u64 = undefined;
+    std.crypto.random.bytes(std.mem.asBytes(&seed));
+
+    const result: *u64 = @ptrCast(@alignCast(ret_ptr));
+    result.* = seed;
+}
+
+/// Hosted function: Stderr.line! (index 1 - sorted alphabetically)
 /// Follows RocCall ABI: (ops, ret_ptr, args_ptr)
 /// Returns {} and takes Str as argument
 fn hostedStderrLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
@@ -201,7 +212,7 @@ fn hostedStderrLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_pt
     stderr.writeAll("\n") catch {};
 }
 
-/// Hosted function: Stdin.line! (index 1 - sorted alphabetically)
+/// Hosted function: Stdin.line! (index 2 - sorted alphabetically)
 /// Follows RocCall ABI: (ops, ret_ptr, args_ptr)
 /// Returns Str and takes {} as argument
 fn hostedStdinLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
@@ -242,7 +253,7 @@ fn hostedStdinLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr
     result.* = RocStr.init(line.ptr, line.len, ops);
 }
 
-/// Hosted function: Stdout.line! (index 2 - sorted alphabetically)
+/// Hosted function: Stdout.line! (index 3 - sorted alphabetically)
 /// Follows RocCall ABI: (ops, ret_ptr, args_ptr)
 /// Returns {} and takes Str as argument
 fn hostedStdoutLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
@@ -260,11 +271,12 @@ fn hostedStdoutLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_pt
 }
 
 /// Array of hosted function pointers, sorted alphabetically by fully-qualified name
-/// These correspond to the hosted functions defined in Stderr, Stdin, and Stdout Type Modules
+/// These correspond to the hosted functions defined in Random, Stderr, Stdin, and Stdout Type Modules
 const hosted_function_ptrs = [_]builtins.host_abi.HostedFn{
-    hostedStderrLine, // Stderr.line! (index 0)
-    hostedStdinLine, // Stdin.line! (index 1)
-    hostedStdoutLine, // Stdout.line! (index 2)
+    hostedRandomSeedU64, // Random.seed_u64! (index 0)
+    hostedStderrLine, // Stderr.line! (index 1)
+    hostedStdinLine, // Stdin.line! (index 2)
+    hostedStdoutLine, // Stdout.line! (index 3)
 };
 
 /// Platform host entrypoint
@@ -292,17 +304,11 @@ fn platform_main(argc: usize, argv: [*][*:0]u8) c_int {
     };
 
     // Build List(Str) from argc/argv
-    std.log.debug("[HOST] Building args...", .{});
     const args_list = buildStrArgsList(argc, argv, &roc_ops);
-    std.log.debug("[HOST] args_list ptr=0x{x} len={d}", .{ @intFromPtr(args_list.bytes), args_list.length });
 
     // Call the app's main! entrypoint - returns I32 exit code
-    std.log.debug("[HOST] Calling roc__main_for_host...", .{});
-
     var exit_code: i32 = -99;
     roc__main_for_host(&roc_ops, @as(*anyopaque, @ptrCast(&exit_code)), @as(*anyopaque, @ptrCast(@constCast(&args_list))));
-
-    std.log.debug("[HOST] Returned from roc, exit_code={d}", .{exit_code});
 
     // Check for memory leaks before returning
     const leak_status = host_env.gpa.deinit();

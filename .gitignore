@@ -3,11 +3,22 @@ generated-docs/
 examples/hello
 examples/exit_code_msg
 examples/exit_tag
+examples/cool_skyline
+examples/dbg_test
+examples/echo_multiline
+examples/fizzbuzz
+examples/match
+examples/sum_fold
+examples/*.wasm
 
 all_roc_syntax
 
 build
 app
+cool_skyline
+hello_world
+tools/wasmtime_runner
+tools/wasmtime/wasmtime.tar.xz
 
 *.a
 *.tar.br
