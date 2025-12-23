@@ -14,12 +14,26 @@ const RocCrashed = builtins.host_abi.RocCrashed;
 
 const wasm_allocator = std.heap.wasm_allocator;
 
+fn allocFromWasmHeap(length: usize, alignment_bytes: usize) [*]u8 {
+    const min_alignment = @max(alignment_bytes, 1);
+    const normalized = std.math.ceilPowerOfTwo(usize, min_alignment) catch min_alignment;
+    const alignment = std.mem.Alignment.fromByteUnits(normalized);
+    return wasm_allocator.rawAlloc(length, alignment, @returnAddress()) orelse @panic("WASM allocation failed");
+}
+
+/// Exported allocator used when Roc-generated Wasm imports `env.roc_alloc`.
+export fn roc_alloc(size: i32, alignment: i32) callconv(.c) i32 {
+    const positive_size: usize = @intCast(@max(size, 0));
+    const align_bytes: usize = @intCast(@max(alignment, 1));
+    const ptr = allocFromWasmHeap(positive_size, align_bytes);
+    return @intCast(@intFromPtr(ptr));
+}
+
 // RocOps callback implementations
 fn rocAllocFn(alloc_req: *RocAlloc, env: *anyopaque) callconv(.c) void {
     _ = env;
-    const align_log2: std.mem.Alignment = @enumFromInt(std.math.log2_int(usize, alloc_req.alignment));
-    const ptr = wasm_allocator.rawAlloc(alloc_req.length, align_log2, @returnAddress());
-    alloc_req.answer = @ptrCast(ptr orelse @panic("WASM allocation failed"));
+    const ptr = allocFromWasmHeap(alloc_req.length, alloc_req.alignment);
+    alloc_req.answer = @ptrCast(ptr);
 }
 
 fn rocDeallocFn(dealloc_req: *RocDealloc, env: *anyopaque) callconv(.c) void {
@@ -30,9 +44,8 @@ fn rocDeallocFn(dealloc_req: *RocDealloc, env: *anyopaque) callconv(.c) void {
 
 fn rocReallocFn(realloc_req: *RocRealloc, env: *anyopaque) callconv(.c) void {
     _ = env;
-    const align_log2: std.mem.Alignment = @enumFromInt(std.math.log2_int(usize, realloc_req.alignment));
-    const ptr = wasm_allocator.rawAlloc(realloc_req.new_length, align_log2, @returnAddress());
-    realloc_req.answer = @ptrCast(ptr orelse @panic("WASM reallocation failed"));
+    const ptr = allocFromWasmHeap(realloc_req.new_length, realloc_req.alignment);
+    realloc_req.answer = @ptrCast(ptr);
 }
 
 fn rocDbgFn(roc_dbg_arg: *const RocDbg, env: *anyopaque) callconv(.c) void {
