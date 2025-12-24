@@ -8,12 +8,12 @@ main! = |args| {
     Stdout.line!("Fetching ${url} ...")
     resp = Http.get!(url)
     Stdout.line!("requestUrl: ${resp.requestUrl}")
-    Stdout.line!("statusCode: ${Str.inspect(resp.statusCode)}")
-    Stdout.line!("responseBody length: ${Str.inspect(List.len(resp.responseBody))}")
-    Stdout.line!("responseHeaders: ${Str.inspect(resp.responseHeaders)}")
+    Stdout.line!("statusCode: ${resp.statusCode.to_str()}")
+    Stdout.line!("responseBody length: ${resp.responseBody.len().to_str()}")
+    Stdout.line!("responseHeaders: ${resp.responseHeaders.to_str()}")
+    Stdout.line!("all: ${resp.to_str()}")
 
-    first_bytes = List.take_first(resp.responseBody, 100)
-    s = Str.from_utf8(first_bytes)?
+    s = resp.responseBody.take_first(100).to_str()?
     Stdout.line!("Response body (first 100 bytes):")
     Stdout.line!(s)
     Ok({})
