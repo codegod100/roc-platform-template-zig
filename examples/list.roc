@@ -7,7 +7,6 @@ main! = |_args| {
     Stdout.line!("Fetching https://example.com ...")
     resp = Http.get!("https://example.com")
     Stdout.line!("requestUrl: ${resp.requestUrl}")
-    dbg(resp.responseHeaders)
     Stdout.line!("responseBody length: ${Str.inspect(List.len(resp.responseBody))}")
     Stdout.line!("responseHeaders: ${Str.inspect(resp.responseHeaders)}")
 
