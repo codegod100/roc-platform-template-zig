@@ -521,7 +521,6 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
             header_count += 1;
         }
     }
-    std.debug.print("Received {d} response headers\n", .{header_count});
 
     var body_list = std.ArrayListUnmanaged(u8){};
     defer body_list.deinit(allocator);
@@ -626,6 +625,7 @@ fn hostedStdinLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr
 /// Follows RocCall ABI: (ops, ret_ptr, args_ptr)
 /// Returns {} and takes Str as argument
 fn hostedStdoutLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
     _ = ret_ptr; // Return value is {} which is zero-sized
 
     // The Roc interpreter passes arguments as a pointer to a struct of values.
@@ -635,7 +635,9 @@ fn hostedStdoutLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_pt
 
     const message = getAsSlice(roc_str_ptr);
 
-    ops.dbg(message);
+    const stdout = std.fs.File.stdout();
+    stdout.writeAll(message) catch {};
+    stdout.writeAll("\n") catch {};
 }
 
 /// Array of hosted function pointers, sorted alphabetically by fully-qualified name
