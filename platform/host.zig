@@ -460,6 +460,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
         requestUrl: RocStr,
         responseBody: RocList,
         responseHeaders: RocDict,
+        statusCode: u16,
     };
 
     const Args = extern struct { url: RocStr };
@@ -477,6 +478,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
         result.responseBody = RocList.empty();
         result.requestHeaders = emptyDict();
         result.responseHeaders = emptyDict();
+        result.statusCode = 0;
         return;
     };
 
@@ -489,6 +491,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
         result.responseBody = RocList.empty();
         result.requestHeaders = emptyDict();
         result.responseHeaders = emptyDict();
+        result.statusCode = 0;
         return;
     };
     defer req.deinit();
@@ -498,6 +501,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
         result.responseBody = RocList.empty();
         result.requestHeaders = emptyDict();
         result.responseHeaders = emptyDict();
+        result.statusCode = 0;
         return;
     };
     var response = req.receiveHead(&redirect_buffer) catch {
@@ -505,6 +509,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
         result.responseBody = RocList.empty();
         result.requestHeaders = emptyDict();
         result.responseHeaders = emptyDict();
+        result.statusCode = 0;
         return;
     };
 
@@ -548,6 +553,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
     result.responseBody = if (body_bytes.len > 0) RocList.fromSlice(u8, body_bytes, false, ops) else RocList.empty();
     result.requestHeaders = emptyDict();
     result.responseHeaders = buildDictFromHeaders(header_names[0..header_count], header_values[0..header_count], ops);
+    result.statusCode = @intFromEnum(response.head.status);
 }
 
 /// Hosted function: Random.seed_u64! (index 1 - sorted alphabetically)
