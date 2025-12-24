@@ -1,8 +1,8 @@
 platform ""
-    requires {} { main! : List(Str) => Try({}, [Exit(I32)]) }
-    exposes [Stdout, Stderr, Stdin, Random]
+    requires {} { main! : List(Str) => Try({}, [OutOfBounds, Exit(I32)]) }
+    exposes [Stdout, Stderr, Stdin, Random, Http]
     packages {}
-    provides { main_for_host! : "main_for_host" }
+    provides { main_for_host!: "main_for_host" }
     targets: {
         files: "targets/",
         exe: {
@@ -15,13 +15,13 @@ platform ""
             arm64win: ["host.lib", app],
             wasm32: ["libhost.a", app],
         }
-        # wasm32 is provided as an executable so it can run directly under WASI
     }
 
 import Stdout
 import Stderr
 import Stdin
 import Random
+import Http
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {

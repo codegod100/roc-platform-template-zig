@@ -33,6 +33,62 @@ Material := [Material(Str, F64)].{
     }
 }
 
+Person := [Person(Str, Str, U64)].{
+    full_name = |self| match self {
+        Person(first, last, _) => "${first} ${last}"
+    }
+
+    is_adult = |self| match self {
+        Person(_, _, age) => age >= 18
+    }
+
+    greet = |self| match self {
+        Person(first, _, _) => "Hello, ${first}!"
+    }
+
+    describe = |self| match self {
+        Person(first, last, age) => "Person: ${first} ${last}, age ${age.to_str()}"
+    }
+}
+
+Counter := [CounterVal(I64)].{
+    increment = |self| match self {
+        CounterVal(n) => CounterVal(n + 1)
+    }
+
+    decrement = |self| match self {
+        CounterVal(n) => CounterVal(n - 1)
+    }
+
+    reset = |_self| CounterVal(0)
+
+    value = |self| match self {
+        CounterVal(n) => n
+    }
+
+    describe = |self| match self {
+        CounterVal(n) => "Counter: ${n.to_str()}"
+    }
+}
+
+Color := [Rgb(U8, U8, U8)].{
+    to_hex = |self| match self {
+        Rgb(r, g, b) => "#${r.to_str()}${g.to_str()}${b.to_str()}" # Simplified hex representation
+    }
+
+    brightness = |self| match self {
+        Rgb(r, g, b) => (U8.to_f64(r) + U8.to_f64(g) + U8.to_f64(b)) / 3.0f64
+    }
+
+    mix = |self, other| match (self, other) {
+        (Rgb(r1, g1, b1), Rgb(r2, g2, b2)) => Rgb((r1 + r2) // 2, (g1 + g2) // 2, (b1 + b2) // 2)
+    }
+
+    describe = |self| match self {
+        Rgb(r, g, b) => "Color: rgb(${r.to_str()}, ${g.to_str()}, ${b.to_str()})"
+    }
+}
+
 # Generic helper that requires its argument to expose a describe method.
 print_description! : a => {} where [a.describe : a -> Str]
 print_description! = |value| Stdout.line!(value.describe())
@@ -85,6 +141,44 @@ main! = |_args| {
     Stdout.line!("\n=== Static dispatch + generics ===")
     describe_all!([circle, rect])
     describe_all!([steel, aluminum])
+
+    Stdout.line!("\n=== Persons via static dispatch ===")
+    person1 : Person
+    person1 = Person("John", "Doe", 25)
+    person2 : Person
+    person2 = Person("Jane", "Smith", 17)
+
+    print_description!(person1)
+    print_description!(person2)
+    adult_str = if person1.is_adult() "true" else "false"
+    Stdout.line!("${person1.full_name()} is adult: ${adult_str}")
+    Stdout.line!(person1.greet())
+
+    Stdout.line!("\n=== Counter via static dispatch ===")
+    counter : Counter
+    counter = CounterVal(5)
+    Stdout.line!(counter.describe())
+    new_counter = counter.increment()
+    Stdout.line!(Counter.describe(new_counter))
+    reset_counter = Counter.reset(new_counter)
+    Stdout.line!(Counter.describe(reset_counter))
+
+    Stdout.line!("\n=== Colors via static dispatch ===")
+    red : Color
+    red = Rgb(255u8, 0u8, 0u8)
+    blue : Color
+    blue = Rgb(0u8, 0u8, 255u8)
+
+    Stdout.line!(Color.describe(red))
+    Stdout.line!(Color.describe(blue))
+    mixed = Color.mix(red, blue)
+    Stdout.line!(Color.describe(mixed))
+    Stdout.line!("Red hex: ${red.to_hex()}")
+    Stdout.line!("Red brightness: ${red.brightness().to_str()}")
+
+    Stdout.line!("\n=== More generics ===")
+    describe_all!([person1, person2])
+    describe_all!([red, blue, mixed])
 
     Ok({})
 }

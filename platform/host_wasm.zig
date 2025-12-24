@@ -100,11 +100,21 @@ fn hostedStdoutLine(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) cal
     std.debug.print("{s}\n", .{message});
 }
 
+fn hostedHttpGet(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // WASM HTTP support depends on the runtime environment (browser fetch or WASI HTTP extension)
+    // For now, return empty string as HTTP is not available in standard WASI
+    const result: *RocStr = @ptrCast(@alignCast(ret_ptr));
+    result.* = RocStr.empty();
+}
+
 const hosted_function_ptrs = [_]builtins.host_abi.HostedFn{
-    hostedRandomSeedU64, // Random.seed_u64!
-    hostedStderrLine, // Stderr.line!
-    hostedStdinLine, // Stdin.line!
-    hostedStdoutLine, // Stdout.line!
+    hostedHttpGet, // Http.get! (index 0)
+    hostedRandomSeedU64, // Random.seed_u64! (index 1)
+    hostedStderrLine, // Stderr.line! (index 2)
+    hostedStdinLine, // Stdin.line! (index 3)
+    hostedStdoutLine, // Stdout.line! (index 4)
 };
 
 extern fn roc__main_for_host(ops: *RocOps, ret_ptr: *anyopaque, arg_ptr: ?*anyopaque) callconv(.c) void;

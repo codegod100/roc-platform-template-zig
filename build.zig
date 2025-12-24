@@ -88,10 +88,21 @@ pub fn build(b: *std.Build) void {
 
     // Build for each Roc target
     for (all_targets) |roc_target| {
+        const target_step_name = @tagName(roc_target);
+        const target_step = b.step(target_step_name, b.fmt("Build host library for {s} target only", .{target_step_name}));
+        target_step.dependOn(cleanup_step);
+
         const target = b.resolveTargetQuery(roc_target.toZigTarget());
         const host_lib = buildHostLib(b, target, optimize, builtins_module);
 
-        // Copy to platform/targets/{target}/libhost.a (or host.lib for Windows)
+        const copy_target = b.addUpdateSourceFiles();
+        copy_target.addCopyFileToSource(
+            host_lib.getEmittedBin(),
+            b.pathJoin(&.{ "platform", "targets", roc_target.targetDir(), roc_target.libFilename() }),
+        );
+        target_step.dependOn(&copy_target.step);
+
+        // Also add to the 'all' copy step
         copy_all.addCopyFileToSource(
             host_lib.getEmittedBin(),
             b.pathJoin(&.{ "platform", "targets", roc_target.targetDir(), roc_target.libFilename() }),
@@ -135,6 +146,9 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    if (native_target.result.os.tag != .windows and native_target.result.os.tag != .wasi) {
+        host_tests.linkLibC();
+    }
 
     const run_host_tests = b.addRunArtifact(host_tests);
 
@@ -240,6 +254,15 @@ fn buildHostLib(
     });
     // Force bundle compiler-rt to resolve runtime symbols like __main
     host_lib.bundle_compiler_rt = true;
+    
+    // Link libc to ensure std.os.environ is initialized
+    // This fixes the issue described in https://github.com/ziglang/zig/issues/4524
+    // where std.os.environ is undefined when building a library without linking libc
+    // This is required for Roc's runtime code that accesses environment variables
+    // (e.g., when formatting Dict or handling errors)
+    if (target.result.os.tag != .windows and target.result.os.tag != .wasi) {
+        host_lib.linkLibC();
+    }
 
     return host_lib;
 }
