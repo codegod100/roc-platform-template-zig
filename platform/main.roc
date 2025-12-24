@@ -1,5 +1,5 @@
 platform ""
-    requires {} { main! : List(Str) => Try({}, [OutOfBounds, Exit(I32)]) }
+    requires {} { main! : List(Str) => Try({}, [OutOfBounds, Exit(I32), BadUtf8({ index: U64, problem: Str.Utf8Problem })]) }
     exposes [Stdout, Stderr, Stdin, Random, Http]
     packages {}
     provides { main_for_host!: "main_for_host" }
