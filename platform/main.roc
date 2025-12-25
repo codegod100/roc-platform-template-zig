@@ -29,5 +29,7 @@ main_for_host! = |args| {
     match result {
         Ok({}) => 0
         Err(Exit(code)) => code
+        Err(OutOfBounds) => 1
+        Err(BadUtf8(_)) => 1
     }
 }
