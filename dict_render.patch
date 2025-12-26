@@ -1,0 +1,104 @@
+--- a/src/eval/interpreter.zig
++++ b/src/eval/interpreter.zig
+@@ -4861,17 +4861,76 @@
+             .dict_to_str => {
+                 // Dict.to_str : Dict(k, v) -> Str
+                 std.debug.assert(args.len == 1); // expects 1 argument: Dict
+ 
+                 const dict_arg = args[0];
+                 std.debug.assert(dict_arg.ptr != null);
+ 
+-                // Render the dict value using the existing rendering infrastructure
+-                const rendered = try self.renderValueRocWithType(dict_arg, dict_arg.rt_var, roc_ops);
+-                defer self.allocator.free(rendered);
++                const roc_dict: *const RocDict = @ptrCast(@alignCast(dict_arg.ptr.?));
++                const data_list = roc_dict.data;
++                const len = data_list.len();
++
++                var out = std.ArrayList(u8).init(self.allocator);
++                defer out.deinit();
++
++                try out.append('{');
++
++                if (len > 0) {
++                    try out.append(' ');
++                    const data_resolved = self.runtime_types.resolveVar(dict_arg.rt_var);
++                    // Dict is a nominal type wrapping a record. We need the k,v types.
++                    const kv_vars = blk: {
++                        if (data_resolved.desc.content == .structure) {
++                            if (data_resolved.desc.content.structure == .nominal_type) {
++                                const nom = data_resolved.desc.content.structure.nominal_type;
++                                const args_slice = self.runtime_types.sliceNominalArgs(nom);
++                                if (args_slice.len == 2) {
++                                    break :blk args_slice;
++                                }
++                            }
++                        }
++                        break :blk null;
++                    };
++
++                    const elem_layout_idx = dict_arg.layout.data.record.idx;
++                    const rec_data = self.runtime_layout_store.getRecordData(elem_layout_idx);
++                    const fields = self.runtime_layout_store.record_fields.sliceRange(rec_data.getFields());
++                    // Find the 'data' field which is the List of tuples
++                    var data_field_idx: ?usize = null;
++                    for (fields, 0..) |f, i| {
++                        if (f.name == self.env.idents.data) {
++                            data_field_idx = i;
++                            break;
++                        }
++                    }
++
++                    if (data_field_idx) |dfi| {
++                        const data_offset = self.runtime_layout_store.getRecordFieldOffset(elem_layout_idx, @intCast(dfi));
++                        const roc_list_ptr: *const builtins.list.RocList = @ptrCast(@alignCast(dict_arg.ptr.? + data_offset));
++                        const list_layout = self.runtime_layout_store.getLayout(fields[dfi].layout);
++                        const tuple_layout = self.runtime_layout_store.getLayout(list_layout.data.list);
++                        const tuple_size = self.runtime_layout_store.layoutSize(tuple_layout);
++
++                        var i: usize = 0;
++                        while (i < len) : (i += 1) {
++                            const tuple_ptr = roc_list_ptr.bytes.? + i * tuple_size;
++                            var tup_sv = StackValue{
++                                .layout = tuple_layout,
++                                .ptr = @ptrCast(tuple_ptr),
++                                .is_initialized = true,
++                                .rt_var = undefined,
++                            };
++                            var tup_acc = try tup_sv.asTuple(self.runtime_layout_store);
++
++                            // Render key
++                            const key_sv = try tup_acc.getElement(0, if (kv_vars) |v| v[0] else undefined);
++                            const key_rendered = if (kv_vars) |v|
++                                try self.renderValueRocWithType(key_sv, v[0], roc_ops)
++                            else
++                                try self.renderValueRoc(key_sv, roc_ops);
++                            defer self.allocator.free(key_rendered);
++                            try out.appendSlice(key_rendered);
++
++                            try out.appendSlice(": ");
++
++                            // Render value
++                            const val_sv = try tup_acc.getElement(1, if (kv_vars) |v| v[1] else undefined);
++                            const val_rendered = if (kv_vars) |v|
++                                try self.renderValueRocWithType(val_sv, v[1], roc_ops)
++                            else
++                                try self.renderValueRoc(val_sv, roc_ops);
++                            defer self.allocator.free(val_rendered);
++                            try out.appendSlice(val_rendered);
++
++                            if (i + 1 < len) try out.appendSlice(", ");
++                        }
++                    }
++                    try out.append(' ');
++                }
++
++                try out.append('}');
+ 
+                 const str_rt_var = try self.getCanonicalStrRuntimeVar();
+                 const value = try self.pushStr(str_rt_var);
+                 const roc_str_ptr: *RocStr = @ptrCast(@alignCast(value.ptr.?));
+-                roc_str_ptr.* = RocStr.fromSlice(rendered, roc_ops);
++                roc_str_ptr.* = RocStr.fromSlice(out.items, roc_ops);
+                 return value;
+             },

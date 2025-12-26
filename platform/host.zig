@@ -66,7 +66,7 @@ fn rocReallocFn(roc_realloc: *builtins.host_abi.RocRealloc, env: *anyopaque) cal
     _ = env;
 
     const align_enum = std.mem.Alignment.fromByteUnits(@max(roc_realloc.alignment, @alignOf(usize)));
-    
+
     // rawResize doesn't work for C allocator (it can't resize in place), so we need alloc + copy + free
     const new_ptr = c_allocator.rawAlloc(roc_realloc.new_length, align_enum, @returnAddress()) orelse {
         const stderr: std.fs.File = .stderr();
@@ -78,7 +78,7 @@ fn rocReallocFn(roc_realloc: *builtins.host_abi.RocRealloc, env: *anyopaque) cal
     // (caller ensures the buffer has at least min(old_len, new_len) valid bytes)
     const old_ptr: [*]const u8 = @ptrCast(roc_realloc.answer);
     @memcpy(new_ptr[0..roc_realloc.new_length], old_ptr[0..roc_realloc.new_length]);
-    
+
     // Free old allocation
     const old_slice = @as([*]u8, @ptrCast(roc_realloc.answer))[0..0];
     c_allocator.rawFree(old_slice, align_enum, @returnAddress());
@@ -517,7 +517,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
     var header_names: [64][]const u8 = undefined;
     var header_values: [64][]const u8 = undefined;
     var header_count: usize = 0;
-    
+
     var headers = response.head.iterateHeaders();
     while (headers.next()) |header| {
         if (header_count < 64) {
@@ -548,7 +548,7 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
 
     // Collect response body
     const body_bytes = body_list.items;
-    
+
     result.requestUrl = request_url;
     result.responseBody = if (body_bytes.len > 0) RocList.fromSlice(u8, body_bytes, false, ops) else RocList.empty();
     result.requestHeaders = emptyDict();
@@ -646,14 +646,311 @@ fn hostedStdoutLine(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_pt
     stdout.writeAll("\n") catch {};
 }
 
+// ============================================================================
+// Logger hosted functions
+// ============================================================================
+
+/// Hosted function: Logger.debug!
+fn hostedLoggerDebug(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const message = getAsSlice(&args.str);
+    const stderr = std.fs.File.stderr();
+    stderr.writeAll("\x1b[36m[DEBUG]\x1b[0m ") catch {};
+    stderr.writeAll(message) catch {};
+    stderr.writeAll("\n") catch {};
+}
+
+/// Hosted function: Logger.error!
+fn hostedLoggerError(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const message = getAsSlice(&args.str);
+    const stderr = std.fs.File.stderr();
+    stderr.writeAll("\x1b[31m[ERROR]\x1b[0m ") catch {};
+    stderr.writeAll(message) catch {};
+    stderr.writeAll("\n") catch {};
+}
+
+/// Hosted function: Logger.info!
+fn hostedLoggerInfo(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const message = getAsSlice(&args.str);
+    const stderr = std.fs.File.stderr();
+    stderr.writeAll("\x1b[32m[INFO]\x1b[0m ") catch {};
+    stderr.writeAll(message) catch {};
+    stderr.writeAll("\n") catch {};
+}
+
+/// Hosted function: Logger.log!
+fn hostedLoggerLog(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const message = getAsSlice(&args.str);
+    const stderr = std.fs.File.stderr();
+    stderr.writeAll("[LOG] ") catch {};
+    stderr.writeAll(message) catch {};
+    stderr.writeAll("\n") catch {};
+}
+
+/// Hosted function: Logger.warn!
+fn hostedLoggerWarn(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const message = getAsSlice(&args.str);
+    const stderr = std.fs.File.stderr();
+    stderr.writeAll("\x1b[33m[WARN]\x1b[0m ") catch {};
+    stderr.writeAll(message) catch {};
+    stderr.writeAll("\n") catch {};
+}
+
+// ============================================================================
+// Storage hosted functions - uses .roc_storage/ directory
+// ============================================================================
+
+const storage_dir = ".roc_storage";
+
+fn ensureStorageDir() !void {
+    std.fs.cwd().makeDir(storage_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+}
+
+fn getStoragePath(key: []const u8, buf: *[4096]u8) []const u8 {
+    const prefix = storage_dir ++ "/";
+    @memcpy(buf[0..prefix.len], prefix);
+    const copy_len = @min(key.len, buf.len - prefix.len);
+    @memcpy(buf[prefix.len..][0..copy_len], key[0..copy_len]);
+    return buf[0 .. prefix.len + copy_len];
+}
+
+/// Hosted function: Storage.delete!
+/// Returns Result {} Str
+fn hostedStorageDelete(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const Args = extern struct { key: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const key = getAsSlice(&args.key);
+
+    // Result layout: { discriminant: u8, payload: union }
+    // Ok({}) = discriminant 1, Err(Str) = discriminant 0
+    const Result = extern struct {
+        payload: RocStr,
+        discriminant: u8,
+    };
+    const result: *Result = @ptrCast(@alignCast(ret_ptr));
+
+    var path_buf: [4096]u8 = undefined;
+    const path = getStoragePath(key, &path_buf);
+
+    std.fs.cwd().deleteFile(path) catch |err| {
+        const msg = switch (err) {
+            error.FileNotFound => "File not found",
+            error.AccessDenied => "Access denied",
+            else => "Delete failed",
+        };
+        result.payload = RocStr.init(msg.ptr, msg.len, ops);
+        result.discriminant = 0; // Err
+        return;
+    };
+
+    result.payload = RocStr.empty();
+    result.discriminant = 1; // Ok
+}
+
+/// Hosted function: Storage.exists!
+/// Returns Bool
+fn hostedStorageExists(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    const Args = extern struct { key: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const key = getAsSlice(&args.key);
+
+    const result: *bool = @ptrCast(@alignCast(ret_ptr));
+
+    var path_buf: [4096]u8 = undefined;
+    const path = getStoragePath(key, &path_buf);
+
+    _ = std.fs.cwd().statFile(path) catch {
+        result.* = false;
+        return;
+    };
+    result.* = true;
+}
+
+/// Hosted function: Storage.list!
+/// Returns List Str
+fn hostedStorageList(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = args_ptr;
+
+    const result: *RocList = @ptrCast(@alignCast(ret_ptr));
+
+    var dir = std.fs.cwd().openDir(storage_dir, .{ .iterate = true }) catch {
+        result.* = RocList.empty();
+        return;
+    };
+    defer dir.close();
+
+    // Count entries first
+    var count: usize = 0;
+    var iter = dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind == .file) count += 1;
+    }
+
+    if (count == 0) {
+        result.* = RocList.empty();
+        return;
+    }
+
+    // Allocate list
+    const list = RocList.allocateExact(@alignOf(RocStr), count, @sizeOf(RocStr), true, ops);
+    const items: [*]RocStr = @ptrCast(@alignCast(list.bytes));
+
+    // Fill entries
+    var iter2 = dir.iterate();
+    var i: usize = 0;
+    while (iter2.next() catch null) |entry| {
+        if (entry.kind == .file and i < count) {
+            items[i] = RocStr.init(entry.name.ptr, entry.name.len, ops);
+            i += 1;
+        }
+    }
+
+    result.* = list;
+}
+
+/// Hosted function: Storage.load!
+/// Returns Result Str [NotFound, PermissionDenied, Other Str]
+fn hostedStorageLoad(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const Args = extern struct { key: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const key = getAsSlice(&args.key);
+
+    // Result layout for Result Str [NotFound, PermissionDenied, Other Str]
+    // Tag union: NotFound=0, Other=1, PermissionDenied=2 (alphabetical)
+    // Result: Ok=1 with Str payload, Err=0 with tag union payload
+    const ErrPayload = extern struct {
+        other_str: RocStr,
+        tag: u8,
+    };
+    const Result = extern struct {
+        payload: extern union {
+            ok_str: RocStr,
+            err: ErrPayload,
+        },
+        discriminant: u8,
+    };
+    const result: *Result = @ptrCast(@alignCast(ret_ptr));
+
+    var path_buf: [4096]u8 = undefined;
+    const path = getStoragePath(key, &path_buf);
+
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+        switch (err) {
+            error.FileNotFound => {
+                result.payload.err = .{ .other_str = RocStr.empty(), .tag = 0 }; // NotFound
+            },
+            error.AccessDenied => {
+                result.payload.err = .{ .other_str = RocStr.empty(), .tag = 2 }; // PermissionDenied
+            },
+            else => {
+                const msg = "Failed to open file";
+                result.payload.err = .{ .other_str = RocStr.init(msg.ptr, msg.len, ops), .tag = 1 }; // Other
+            },
+        }
+        result.discriminant = 0; // Err
+        return;
+    };
+    defer file.close();
+
+    const content = file.readToEndAlloc(c_allocator, 1024 * 1024) catch {
+        const msg = "Failed to read file";
+        result.payload.err = .{ .other_str = RocStr.init(msg.ptr, msg.len, ops), .tag = 1 };
+        result.discriminant = 0;
+        return;
+    };
+    defer c_allocator.free(content);
+
+    result.payload.ok_str = RocStr.init(content.ptr, content.len, ops);
+    result.discriminant = 1; // Ok
+}
+
+/// Hosted function: Storage.save!
+/// Returns Result {} Str
+fn hostedStorageSave(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const Args = extern struct { key: RocStr, value: RocStr };
+    const args: *const Args = @ptrCast(@alignCast(args_ptr));
+    const key = getAsSlice(&args.key);
+    const value = getAsSlice(&args.value);
+
+    const Result = extern struct {
+        payload: RocStr,
+        discriminant: u8,
+    };
+    const result: *Result = @ptrCast(@alignCast(ret_ptr));
+
+    ensureStorageDir() catch {
+        const msg = "Failed to create storage directory";
+        result.payload = RocStr.init(msg.ptr, msg.len, ops);
+        result.discriminant = 0;
+        return;
+    };
+
+    var path_buf: [4096]u8 = undefined;
+    const path = getStoragePath(key, &path_buf);
+
+    const file = std.fs.cwd().createFile(path, .{}) catch |err| {
+        const msg = switch (err) {
+            error.AccessDenied => "Access denied",
+            else => "Failed to create file",
+        };
+        result.payload = RocStr.init(msg.ptr, msg.len, ops);
+        result.discriminant = 0;
+        return;
+    };
+    defer file.close();
+
+    file.writeAll(value) catch {
+        const msg = "Failed to write file";
+        result.payload = RocStr.init(msg.ptr, msg.len, ops);
+        result.discriminant = 0;
+        return;
+    };
+
+    result.payload = RocStr.empty();
+    result.discriminant = 1; // Ok
+}
+
 /// Array of hosted function pointers, sorted alphabetically by fully-qualified name
-/// These correspond to the hosted functions defined in Random, Stderr, Stdin, and Stdout Type Modules
+/// These correspond to the hosted functions defined in the platform Type Modules
 const hosted_function_ptrs = [_]builtins.host_abi.HostedFn{
     hostedHttpGet, // Http.get! (index 0)
-    hostedRandomSeedU64, // Random.seed_u64! (index 1)
-    hostedStderrLine, // Stderr.line! (index 2)
-    hostedStdinLine, // Stdin.line! (index 3)
-    hostedStdoutLine, // Stdout.line! (index 4)
+    hostedLoggerDebug, // Logger.debug! (index 1)
+    hostedLoggerError, // Logger.error! (index 2)
+    hostedLoggerInfo, // Logger.info! (index 3)
+    hostedLoggerLog, // Logger.log! (index 4)
+    hostedLoggerWarn, // Logger.warn! (index 5)
+    hostedRandomSeedU64, // Random.seed_u64! (index 6)
+    hostedStderrLine, // Stderr.line! (index 7)
+    hostedStdinLine, // Stdin.line! (index 8)
+    hostedStdoutLine, // Stdout.line! (index 9)
+    hostedStorageDelete, // Storage.delete! (index 10)
+    hostedStorageExists, // Storage.exists! (index 11)
+    hostedStorageList, // Storage.list! (index 12)
+    hostedStorageLoad, // Storage.load! (index 13)
+    hostedStorageSave, // Storage.save! (index 14)
 };
 
 /// Platform host entrypoint

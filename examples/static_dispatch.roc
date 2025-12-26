@@ -34,6 +34,8 @@ Material := [Material(Str, F64)].{
 }
 
 Person := [Person(Str, Str, U64)].{
+    dog_age_threshold = 100
+
     full_name = |self| match self {
         Person(first, last, _) => "${first} ${last}"
     }
@@ -41,9 +43,15 @@ Person := [Person(Str, Str, U64)].{
     is_adult = |self| match self {
         Person(_, _, age) => age >= 18
     }
+    is_dog = |self| match self {
+        Person(_, _, age) => age > dog_age_threshold
+    }
 
     greet = |self| match self {
-        Person(first, _, _) => "Hello, ${first}!"
+        Person(first, _, age) => {
+            is_dog_val = age > dog_age_threshold
+            if is_dog_val { "Woof!" } else { "Hi, ${first}!" }
+        }
     }
 
     describe = |self| match self {
@@ -144,14 +152,15 @@ main! = |_args| {
 
     Stdout.line!("\n=== Persons via static dispatch ===")
     person1 : Person
-    person1 = Person("John", "Doe", 25)
+    person1 = Person("John", "Doe", 125)
     person2 : Person
     person2 = Person("Jane", "Smith", 17)
 
     print_description!(person1)
     print_description!(person2)
-    adult_str = if person1.is_adult() "true" else "false"
-    Stdout.line!("${person1.full_name()} is adult: ${adult_str}")
+    #adult_str = if person1.is_adult() "true" else "false"
+    Stdout.line!("${person1.full_name()} is adult: ${person1.is_adult().to_str()}")
+    Stdout.line!("${person1.full_name()} is dog: ${person1.is_dog().to_str()}")
     Stdout.line!(person1.greet())
 
     Stdout.line!("\n=== Counter via static dispatch ===")

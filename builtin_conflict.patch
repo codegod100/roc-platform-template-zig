@@ -1,0 +1,27 @@
+--- a/src/build/roc/Builtin.roc
++++ b/src/build/roc/Builtin.roc
+@@ -375,17 +375,11 @@
+                 }
+         }
+ 
+-<<<<<<< Conflict 1 of 1
+-+++++++ Contents of side #1
+-        Dict :: [EmptyDict].{}
+-%%%%%%% Changes from base to side #2
+         Dict(k, v) :: {
+                 buckets : List({ dist_and_fingerprint : U32, data_index : U32 }),
+                 data : List((k, v)),
+                 max_bucket_capacity : U64,
+                 max_load_factor : F32,
+                 shifts : U8,
+-       }.{}
+-+       }.{
+-+               to_str : Dict(k, v) -> Str
+-+       }
+->>>>>>> Conflict 1 of 1 ends
++        }.{
++                to_str : Dict(k, v) -> Str
++        }
+ 
+         Set(item) :: [].{
+                 is_eq : Set(item), Set(item) -> Bool

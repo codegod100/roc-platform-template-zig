@@ -1,0 +1,12 @@
+--- a/src/parse/Parser.zig
++++ b/src/parse/Parser.zig
+@@ -957,6 +957,9 @@ pub fn parsePlatformHeader(self: *Parser) Error!AST.Header.Idx {
+     if (self.peek() == .KwTargets) {
+         self.advance(); // Advance past 'targets'
+         targets = try self.parseTargetsSection();
++    } else {
++        const tag = self.peek();
++        std.debug.print("DEBUG: Expected targets keyword, got: {any}\n", .{tag});
+     }
+ 
+     return self.store.addHeader(.{ .platform = .{

@@ -72,3 +72,9 @@ build-output/
 # Compiled examples
 examples/list
 examples/static_dispatch
+-e 
+# More compiled examples
+exit
+http_get
+letters
+list

@@ -29,13 +29,13 @@ Once the platform is built, you can run the Roc examples. You need to use your l
 Assuming your Roc compiler is at `../roc/zig-out/bin/roc`:
 
 ```bash
-../roc/zig-out/bin/roc examples/list.roc
+../roc/zig-out/bin/roc examples/http_get.roc
 ```
 
 ### Tips
 *   **Rebuilding**: Use `--no-cache` if you are making changes to the platform host to ensure a fresh rebuild of the Roc application with the new host.
     ```bash
-    ../roc/zig-out/bin/roc examples/list.roc --no-cache
+    ../roc/zig-out/bin/roc examples/http_get.roc --no-cache
     ```
 *   **Debugging**: If you are debugging `host.zig`, you can see standard output/error from the host in the console.
 

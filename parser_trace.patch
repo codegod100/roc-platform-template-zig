@@ -1,0 +1,42 @@
+--- a/src/parse/Parser.zig
++++ b/src/parse/Parser.zig
+@@ -878,6 +878,7 @@ pub fn parsePlatformHeader(self: *Parser) Error!AST.Header.Idx {
+        };
+    }
+ 
++    std.debug.print("DEBUG: Parsed requires\n", .{});
+     const requires_entries = try self.store.requiresEntrySpanFrom(requires_entries_top);
+ 
+     // Get exposes
+@@ -905,6 +906,7 @@ pub fn parsePlatformHeader(self: *Parser) Error!AST.Header.Idx {
+             error.TooNested => return error.TooNested,
+         }
+     };
++    std.debug.print("DEBUG: Parsed exposes\n", .{});
+     const exposes_span = try self.store.exposedItemSpanFrom(exposes_top);
+     const exposes = try self.store.addCollection(
+         .collection_exposed,
+@@ -939,6 +941,7 @@ pub fn parsePlatformHeader(self: *Parser) Error!AST.Header.Idx {
+             error.TooNested => return error.TooNested,
+         }
+     };
++    std.debug.print("DEBUG: Parsed packages\n", .{});
+     const packages_span = try self.store.recordFieldSpanFrom(packages_top);
+     const packages = try self.store.addCollection(
+         .collection_packages,
+@@ -973,6 +976,7 @@ pub fn parsePlatformHeader(self: *Parser) Error!AST.Header.Idx {
+             error.TooNested => return error.TooNested,
+         }
+     };
++    std.debug.print("DEBUG: Parsed provides\n", .{});
+     const provides_span = try self.store.recordFieldSpanFrom(provides_top);
+     const provides = try self.store.addCollection(
+         .collection_record_fields,
+@@ -983,6 +987,8 @@ pub fn parsePlatformHeader(self: *Parser) Error!AST.Header.Idx {
+     );
+ 
+     // Parse optional targets section
++    std.debug.print("DEBUG: Checking targets token: {any}\n", .{self.peek()});
+     var targets: ?AST.TargetsSection.Idx = null;
+     if (self.peek() == .KwTargets) {
+         self.advance(); // Advance past 'targets'

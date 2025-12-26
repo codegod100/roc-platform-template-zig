@@ -1,0 +1,44 @@
+--- a/src/eval/interpreter.zig
++++ b/src/eval/interpreter.zig
+@@ -11865,21 +11865,6 @@
+                     const backing = self.runtime_types.getAliasBackingVar(resolved.desc.content.alias);
+                     resolved = self.runtime_types.resolveVar(backing);
+                 }
+-                if (resolved.desc.content != .structure or resolved.desc.content.structure != .tag_union) {
+-                    const content_tag = @tagName(resolved.desc.content);
+-                    const struct_tag = if (resolved.desc.content == .structure) @tagName(resolved.desc.content.structure) else "n/a";
+-                    const tag_name_str = self.env.getIdent(tag.name);
+-                    // Also show what the ct_var resolves to for debugging
+-                    const ct_var = can.ModuleEnv.varFrom(expr_idx);
+-                    const ct_resolved = self.env.types.resolveVar(ct_var);
+-                    const ct_content_tag = @tagName(ct_resolved.desc.content);
+-                    const has_expected = expected_rt_var != null;
+-                    const msg = std.fmt.allocPrint(self.allocator, "e_tag: expected tag_union but got rt={s}:{s} ct={s} has_expected={} for tag `{s}`", .{ content_tag, struct_tag, ct_content_tag, has_expected, tag_name_str }) catch "e_tag: expected tag_union structure type";
+-                    self.triggerCrash(msg, true, roc_ops);
+-                    return error.Crash;
+-                }
+-
+                 var tag_list = std.array_list.AlignedManaged(types.Tag, null).init(self.allocator);
+                 defer tag_list.deinit();
+                 try self.appendUnionTags(rt_var, &tag_list);
+@@ -11912,6 +11897,21 @@
+                     }
+                 }
+ 
++                if (resolved.desc.content != .structure or resolved.desc.content.structure != .tag_union) {
++                    const content_tag = @tagName(resolved.desc.content);
++                    const struct_tag = if (resolved.desc.content == .structure) @tagName(resolved.desc.content.structure) else "n/a";
++                    const tag_name_str = self.env.getIdent(tag.name);
++                    // Also show what the ct_var resolves to for debugging
++                    const ct_var = can.ModuleEnv.varFrom(expr_idx);
++                    const ct_resolved = self.env.types.resolveVar(ct_var);
++                    const ct_content_tag = @tagName(ct_resolved.desc.content);
++                    const has_expected = expected_rt_var != null;
++                    const msg = std.fmt.allocPrint(self.allocator, "e_tag: expected tag_union but got rt={s}:{s} ct={s} has_expected={} for tag `{s}`", .{ content_tag, struct_tag, ct_content_tag, has_expected, tag_name_str }) catch "e_tag: expected tag_union structure type";
++                    self.triggerCrash(msg, true, roc_ops);
++                    return error.Crash;
++                }
++
+                 const tag_index = tag_index_opt orelse {
+                     const tag_name_str = self.env.getIdent(tag.name);
+                     const msg = std.fmt.allocPrint(self.allocator, "e_tag: tag `{s}` not found in tag_union", .{tag_name_str}) catch "e_tag: tag not found in tag_union";
