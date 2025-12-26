@@ -1,5 +1,5 @@
 platform ""
-    requires {} { main! : List(Str) => Try({}, [OutOfBounds, Exit(I32), BadUtf8({ index: U64, problem: Utf8Problem })]) }
+    requires {} { main! : List(Str) => Try({}, [Exit(I32)]) }
     exposes [Stdout, Stderr, Stdin, Random, Http, Logger, Storage]
     packages {}
     provides { main_for_host!: "main_for_host" }
@@ -32,13 +32,5 @@ main_for_host! = |args| {
     match result {
         Ok({}) => 0
         Err(Exit(code)) => code
-        Err(OutOfBounds) => {
-            Stderr.line!("Error: Argument missing (OutOfBounds)")
-            1
-        }
-        Err(BadUtf8(_)) => {
-            Stderr.line!("Error: Invalid UTF-8")
-            1
-        }
     }
 }
