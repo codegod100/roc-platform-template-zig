@@ -15,76 +15,58 @@ import pf.Storage
 # =============================================================================
 
 # =============================================================================
-# Writer Types - Different implementations of a "write" interface
+# Writer Types - Wrapping DIFFERENT platform implementations
 # =============================================================================
 
-# Standard output writer
-ConsoleWriter := [ConsoleWriter].{
+# Wraps Stdout - writes to standard output
+StdoutWriter := [StdoutWriter].{
     write! = |_self, msg| Stdout.line!(msg)
 }
 
-# Logger writer - uses platform Logger
-LogWriter := [LogWriter].{
+# Wraps Logger - writes to platform logger (different output format)
+LoggerWriter := [LoggerWriter].{
     write! = |_self, msg| Logger.log!(msg)
 }
 
-# Prefixed writer - adds a prefix to all messages
-PrefixedWriter := [PrefixedWriter(Str)].{
-    write! = |self, msg| match self {
-        PrefixedWriter(prefix) => Stdout.line!("[${prefix}] ${msg}")
-    }
-}
-
-# Mock writer - for testing, adds [TEST] tag
-TestWriter := [TestWriter].{
-    write! = |_self, msg| Stdout.line!("[TEST] ${msg}")
-}
-
-# Silent writer - does nothing (useful for suppressing output)
+# Mock writer - does nothing (for testing/benchmarking)
 NullWriter := [NullWriter].{
     write! = |_self, _msg| {}
 }
 
 # =============================================================================
-# Generic Function with Injected Writer
+# Storage Types - Wrapping DIFFERENT storage implementations
 # =============================================================================
 
-# This function works with ANY type that has a write! method
-say_hello! : writer, Str => {}
+# Real storage - uses platform Storage (writes to disk)
+RealStorage := [RealStorage].{
+    save! = |_self, key, value| Storage.save!(key, value)
+    load! = |_self, key| Storage.load!(key)
+    exists! = |_self, key| Storage.exists!(key)
+}
+
+# Mock storage - always succeeds, stores nothing (for testing)
+MockStorage := [MockStorage].{
+    save! = |_self, _key, _value| Ok({})
+    load! = |_self, key| Ok("mock:${key}")
+    exists! = |_self, _key| Bool.True
+}
+
+# =============================================================================
+# Generic Functions with Injected Dependencies
+# =============================================================================
+
+# Works with ANY writer that has a write! method
+greet! : writer, Str => {}
     where [writer.write! : writer, Str => {}]
-say_hello! = |writer, name| {
+greet! = |writer, name| {
     writer.write!("Hello, ${name}!")
 }
 
-# Another generic function
-say_goodbye! : writer, Str => {}
-    where [writer.write! : writer, Str => {}]
-say_goodbye! = |writer, name| {
-    writer.write!("Goodbye, ${name}!")
-}
-
-# =============================================================================
-# Storage Types - Different storage implementations
-# =============================================================================
-
-# Real storage using platform Storage
-FileStorage := [FileStorage].{
-    save! = |_self, key, value| Storage.save!(key, value)
-}
-
-# Mock storage for testing - always succeeds
-MockStorage := [MockStorage].{
-    save! = |_self, _key, _value| Ok({})
-}
-
-# =============================================================================
-# Generic Function with Injected Storage
-# =============================================================================
-
-store_value! : storage, Str, Str => Try({}, Str)
+# Works with ANY storage that has save!/load! methods
+save_user! : storage, Str, Str => Try({}, Str)
     where [storage.save! : storage, Str, Str => Try({}, Str)]
-store_value! = |storage, key, value| {
-    storage.save!(key, value)
+save_user! = |storage, user_id, data| {
+    storage.save!("user:${user_id}", data)
 }
 
 # =============================================================================
@@ -95,100 +77,56 @@ main! = |_args| {
     Stdout.line!("=== Dependency Injection Examples ===")
     Stdout.line!("")
 
-    # Create writer instances - note the type annotation and value assignment
-    console : ConsoleWriter
-    console = ConsoleWriter
+    # Create instances of different implementations
+    stdout_writer : StdoutWriter
+    stdout_writer = StdoutWriter
 
-    prefixed : PrefixedWriter
-    prefixed = PrefixedWriter("APP")
+    logger_writer : LoggerWriter
+    logger_writer = LoggerWriter
 
-    tester : TestWriter
-    tester = TestWriter
+    null_writer : NullWriter
+    null_writer = NullWriter
 
-    silent : NullWriter
-    silent = NullWriter
-
-    log_writer : LogWriter
-    log_writer = LogWriter
-
-    # Example 1: Same function, different writers
-    Stdout.line!("Example 1: Same Function, Different Writers")
-    Stdout.line!("--------------------------------------------")
-
-    Stdout.line!("With ConsoleWriter:")
-    say_hello!(console, "Alice")
-
-    Stdout.line!("With LogWriter (uses platform Logger):")
-    say_hello!(log_writer, "Bob")
-
-    Stdout.line!("With PrefixedWriter:")
-    say_hello!(prefixed, "Charlie")
-
-    Stdout.line!("With TestWriter:")
-    say_hello!(tester, "Diana")
-
-    Stdout.line!("With NullWriter (silent):")
-    say_hello!(silent, "Eve")
-    Stdout.line!("  (no output above - that's the point!)")
-    Stdout.line!("")
-
-    # Example 2: Multiple calls with same writer
-    Stdout.line!("Example 2: Conversation with Injected Writer")
-    Stdout.line!("---------------------------------------------")
-
-    say_hello!(console, "World")
-    say_goodbye!(console, "World")
-    Stdout.line!("")
-
-    Stdout.line!("Same conversation with PrefixedWriter:")
-    say_hello!(prefixed, "World")
-    say_goodbye!(prefixed, "World")
-    Stdout.line!("")
-
-    # Example 3: Storage injection
-    Stdout.line!("Example 3: Storage Injection")
-    Stdout.line!("-----------------------------")
-
-    real_storage : FileStorage
-    real_storage = FileStorage
+    real_storage : RealStorage
+    real_storage = RealStorage
 
     mock_storage : MockStorage
     mock_storage = MockStorage
 
-    Stdout.line!("Saving with real storage:")
-    _r1 = store_value!(real_storage, "user:alice", "Alice Smith")
-    Stdout.line!("  Saved to .roc_storage/user:alice")
+    # Example 1: Same function, different writer implementations
+    Stdout.line!("Example 1: greet! with Different Writers")
+    Stdout.line!("-----------------------------------------")
 
-    Stdout.line!("Saving with mock storage:")
-    _r2 = store_value!(mock_storage, "user:bob", "Bob Jones")
-    Stdout.line!("  Mock storage always succeeds (no file created)")
+    Stdout.line!("With StdoutWriter (writes to stdout):")
+    greet!(stdout_writer, "Alice")
+
+    Stdout.line!("With LoggerWriter (writes to logger):")
+    greet!(logger_writer, "Bob")
+
+    Stdout.line!("With NullWriter (silent - for testing):")
+    greet!(null_writer, "Charlie")
+    Stdout.line!("  (no output - perfect for benchmarks)")
     Stdout.line!("")
 
-    # Example 4: Different prefixes
-    Stdout.line!("Example 4: Multiple PrefixedWriter Instances")
-    Stdout.line!("--------------------------------------------")
+    # Example 2: Same function, different storage implementations
+    Stdout.line!("Example 2: save_user! with Different Storage")
+    Stdout.line!("---------------------------------------------")
 
-    app_writer : PrefixedWriter
-    app_writer = PrefixedWriter("APP")
+    Stdout.line!("With RealStorage (writes to disk):")
+    _r1 = save_user!(real_storage, "alice", "Alice Smith")
+    Stdout.line!("  Saved to .roc_storage/user:alice")
 
-    db_writer : PrefixedWriter
-    db_writer = PrefixedWriter("DB")
-
-    api_writer : PrefixedWriter
-    api_writer = PrefixedWriter("API")
-
-    say_hello!(app_writer, "Application")
-    say_hello!(db_writer, "Database")
-    say_hello!(api_writer, "Service")
+    Stdout.line!("With MockStorage (no-op for testing):")
+    _r2 = save_user!(mock_storage, "bob", "Bob Jones")
+    Stdout.line!("  Mock always succeeds, no file created")
     Stdout.line!("")
 
     # Summary
     Stdout.line!("=== Key Takeaways ===")
-    Stdout.line!("1. Define wrapper types: TypeName := [TagName].{ method = |self, args| ... }")
-    Stdout.line!("2. Create instances with type annotation: x : TypeName; x = TagName")
-    Stdout.line!("3. Pass instances to generic functions")
-    Stdout.line!("4. Use 'where [type.method : type, Args => Ret]' for constraints")
-    Stdout.line!("5. Same function works with ANY type that satisfies the constraint")
+    Stdout.line!("* StdoutWriter vs LoggerWriter - same interface, different output")
+    Stdout.line!("* RealStorage vs MockStorage - same interface, different behavior")
+    Stdout.line!("* NullWriter/MockStorage - inject for tests without side effects")
+    Stdout.line!("* Functions don't know which implementation they're using")
     Stdout.line!("")
     Stdout.line!("=== Done ===")
 
