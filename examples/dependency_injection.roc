@@ -4,65 +4,54 @@ import pf.Stdout
 import pf.Logger
 import pf.Storage
 
+# Import our platform-agnostic module
+import Greeting
+
 # =============================================================================
 # Dependency Injection Example
 # =============================================================================
-# This example demonstrates dependency injection in Roc by passing
-# implementations as parameters. The key is creating wrapper types that
-# can be instantiated as values and passed to generic functions.
-#
-# Pattern: TypeName := [TagName].{ method = |self, args| ... }
+# This demonstrates how to write platform-agnostic modules (like Greeting)
+# that accept injected implementations. The Greeting module has NO platform
+# imports - it only knows about the `write!` interface.
 # =============================================================================
 
 # =============================================================================
-# Writer Types - Wrapping DIFFERENT platform implementations
+# Writer Implementations - These wrap platform-specific code
 # =============================================================================
 
-# Wraps Stdout - writes to standard output
+# Wraps Stdout
 StdoutWriter := [StdoutWriter].{
     write! = |_self, msg| Stdout.line!(msg)
 }
 
-# Wraps Logger - writes to platform logger (different output format)
+# Wraps Logger
 LoggerWriter := [LoggerWriter].{
     write! = |_self, msg| Logger.log!(msg)
 }
 
-# Mock writer - does nothing (for testing/benchmarking)
+# Mock writer for testing - does nothing
 NullWriter := [NullWriter].{
     write! = |_self, _msg| {}
 }
 
 # =============================================================================
-# Storage Types - Wrapping DIFFERENT storage implementations
+# Storage Implementations
 # =============================================================================
 
-# Real storage - uses platform Storage (writes to disk)
+# Wraps platform Storage
 RealStorage := [RealStorage].{
     save! = |_self, key, value| Storage.save!(key, value)
-    load! = |_self, key| Storage.load!(key)
-    exists! = |_self, key| Storage.exists!(key)
 }
 
-# Mock storage - always succeeds, stores nothing (for testing)
+# Mock storage for testing
 MockStorage := [MockStorage].{
     save! = |_self, _key, _value| Ok({})
-    load! = |_self, key| Ok("mock:${key}")
-    exists! = |_self, _key| Bool.True
 }
 
 # =============================================================================
-# Generic Functions with Injected Dependencies
+# Business logic that uses injected storage
 # =============================================================================
 
-# Works with ANY writer that has a write! method
-greet! : writer, Str => {}
-    where [writer.write! : writer, Str => {}]
-greet! = |writer, name| {
-    writer.write!("Hello, ${name}!")
-}
-
-# Works with ANY storage that has save!/load! methods
 save_user! : storage, Str, Str => Try({}, Str)
     where [storage.save! : storage, Str, Str => Try({}, Str)]
 save_user! = |storage, user_id, data| {
@@ -70,14 +59,14 @@ save_user! = |storage, user_id, data| {
 }
 
 # =============================================================================
-# Main - Demonstrate Dependency Injection
+# Main - Inject implementations into platform-agnostic code
 # =============================================================================
 
 main! = |_args| {
     Stdout.line!("=== Dependency Injection Examples ===")
     Stdout.line!("")
 
-    # Create instances of different implementations
+    # Create writer instances
     stdout_writer : StdoutWriter
     stdout_writer = StdoutWriter
 
@@ -87,48 +76,51 @@ main! = |_args| {
     null_writer : NullWriter
     null_writer = NullWriter
 
+    # Example 1: Inject different writers into the Greeting module
+    Stdout.line!("Example 1: Greeting module with StdoutWriter")
+    Stdout.line!("---------------------------------------------")
+    Greeting.greet!(stdout_writer, "Alice")
+    Greeting.farewell!(stdout_writer, "Alice")
+    Greeting.introduce!(stdout_writer, "Bob", "engineer")
+    Stdout.line!("")
+
+    Stdout.line!("Example 2: Same module with LoggerWriter")
+    Stdout.line!("-----------------------------------------")
+    Greeting.greet!(logger_writer, "Charlie")
+    Greeting.farewell!(logger_writer, "Charlie")
+    Stdout.line!("")
+
+    Stdout.line!("Example 3: Same module with NullWriter (silent)")
+    Stdout.line!("------------------------------------------------")
+    Greeting.greet!(null_writer, "Diana")
+    Greeting.farewell!(null_writer, "Diana")
+    Stdout.line!("  (no output - the module ran but writer did nothing)")
+    Stdout.line!("")
+
+    # Example 4: Storage injection
+    Stdout.line!("Example 4: Storage injection")
+    Stdout.line!("----------------------------")
+
     real_storage : RealStorage
     real_storage = RealStorage
 
     mock_storage : MockStorage
     mock_storage = MockStorage
 
-    # Example 1: Same function, different writer implementations
-    Stdout.line!("Example 1: greet! with Different Writers")
-    Stdout.line!("-----------------------------------------")
-
-    Stdout.line!("With StdoutWriter (writes to stdout):")
-    greet!(stdout_writer, "Alice")
-
-    Stdout.line!("With LoggerWriter (writes to logger):")
-    greet!(logger_writer, "Bob")
-
-    Stdout.line!("With NullWriter (silent - for testing):")
-    greet!(null_writer, "Charlie")
-    Stdout.line!("  (no output - perfect for benchmarks)")
-    Stdout.line!("")
-
-    # Example 2: Same function, different storage implementations
-    Stdout.line!("Example 2: save_user! with Different Storage")
-    Stdout.line!("---------------------------------------------")
-
-    Stdout.line!("With RealStorage (writes to disk):")
+    Stdout.line!("With RealStorage:")
     _r1 = save_user!(real_storage, "alice", "Alice Smith")
-    Stdout.line!("  Saved to .roc_storage/user:alice")
+    Stdout.line!("  Saved to disk")
 
-    Stdout.line!("With MockStorage (no-op for testing):")
+    Stdout.line!("With MockStorage:")
     _r2 = save_user!(mock_storage, "bob", "Bob Jones")
-    Stdout.line!("  Mock always succeeds, no file created")
+    Stdout.line!("  Mock - no file created")
     Stdout.line!("")
 
     # Summary
-    Stdout.line!("=== Key Takeaways ===")
-    Stdout.line!("* StdoutWriter vs LoggerWriter - same interface, different output")
-    Stdout.line!("* RealStorage vs MockStorage - same interface, different behavior")
-    Stdout.line!("* NullWriter/MockStorage - inject for tests without side effects")
-    Stdout.line!("* Functions don't know which implementation they're using")
+    Stdout.line!("=== Key Point ===")
+    Stdout.line!("The Greeting module has ZERO platform imports.")
+    Stdout.line!("It works with any writer you inject!")
     Stdout.line!("")
-    Stdout.line!("=== Done ===")
 
     Ok({})
 }
