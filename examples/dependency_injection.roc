@@ -23,6 +23,11 @@ ConsoleWriter := [ConsoleWriter].{
     write! = |_self, msg| Stdout.line!(msg)
 }
 
+# Logger writer - uses platform Logger
+LogWriter := [LogWriter].{
+    write! = |_self, msg| Logger.log!(msg)
+}
+
 # Prefixed writer - adds a prefix to all messages
 PrefixedWriter := [PrefixedWriter(Str)].{
     write! = |self, msg| match self {
@@ -103,6 +108,9 @@ main! = |_args| {
     silent : NullWriter
     silent = NullWriter
 
+    log_writer : LogWriter
+    log_writer = LogWriter
+
     # Example 1: Same function, different writers
     Stdout.line!("Example 1: Same Function, Different Writers")
     Stdout.line!("--------------------------------------------")
@@ -110,14 +118,17 @@ main! = |_args| {
     Stdout.line!("With ConsoleWriter:")
     say_hello!(console, "Alice")
 
+    Stdout.line!("With LogWriter (uses platform Logger):")
+    say_hello!(log_writer, "Bob")
+
     Stdout.line!("With PrefixedWriter:")
-    say_hello!(prefixed, "Bob")
+    say_hello!(prefixed, "Charlie")
 
     Stdout.line!("With TestWriter:")
-    say_hello!(tester, "Charlie")
+    say_hello!(tester, "Diana")
 
     Stdout.line!("With NullWriter (silent):")
-    say_hello!(silent, "Diana")
+    say_hello!(silent, "Eve")
     Stdout.line!("  (no output above - that's the point!)")
     Stdout.line!("")
 
