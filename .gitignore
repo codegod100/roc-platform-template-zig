@@ -72,9 +72,13 @@ build-output/
 # Compiled examples
 examples/list
 examples/static_dispatch
--e 
+-e
 # More compiled examples
 exit
 http_get
 letters
 list
+
+# MCP server
+mcp/node_modules/
+mcp/dist/
