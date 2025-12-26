@@ -7,334 +7,179 @@ import pf.Storage
 # =============================================================================
 # Dependency Injection Example
 # =============================================================================
-# This example demonstrates how to use platform types (Logger, Storage)
-# for dependency injection patterns in Roc.
+# This example demonstrates dependency injection in Roc by passing
+# implementations as parameters. The key is creating wrapper types that
+# can be instantiated as values and passed to generic functions.
 #
-# Note: Nominal types in Roc use tag unions as payload. This example shows
-# patterns that work with the current compiler.
-#
-# KNOWN ISSUE: Storage operations may hit wildcard patterns due to Result/Try
-# type matching differences between the platform ABI and Roc's expectations.
-# The example still runs but storage data may not be retrieved correctly.
+# Pattern: TypeName := [TagName].{ method = |self, args| ... }
 # =============================================================================
 
 # =============================================================================
-# Example 1: Direct Platform Type Usage
+# Writer Types - Different implementations of a "write" interface
 # =============================================================================
-# The simplest form - just use platform types directly in functions.
 
-greet_with_logging! : Str => {}
-greet_with_logging! = |name| {
-    Logger.info!("Greeting user: ${name}")
-    Logger.log!("Hello, ${name}!")
+# Standard output writer
+ConsoleWriter := [ConsoleWriter].{
+    write! = |_self, msg| Stdout.line!(msg)
 }
 
-process_request! : Str => Try({}, Str)
-process_request! = |request_id| {
-    Logger.info!("Processing request: ${request_id}")
-
-    if Str.is_empty(request_id) {
-        Logger.error!("Empty request ID!")
-        Err("Invalid request")
-    } else {
-        Logger.info!("Request ${request_id} completed successfully")
-        Ok({})
+# Prefixed writer - adds a prefix to all messages
+PrefixedWriter := [PrefixedWriter(Str)].{
+    write! = |self, msg| match self {
+        PrefixedWriter(prefix) => Stdout.line!("[${prefix}] ${msg}")
     }
 }
 
-# =============================================================================
-# Example 2: Storage Operations
-# =============================================================================
-
-save_user_data! : Str, Str => Try({}, Str)
-save_user_data! = |user_id, data| {
-    key = "user:${user_id}"
-    Logger.debug!("Saving data for key: ${key}")
-    Storage.save!(key, data)
+# Mock writer - for testing, adds [TEST] tag
+TestWriter := [TestWriter].{
+    write! = |_self, msg| Stdout.line!("[TEST] ${msg}")
 }
 
-load_user_data! : Str => Try(Str, Str)
-load_user_data! = |user_id| {
-    key = "user:${user_id}"
-    Logger.info!("Loading user data for: ${user_id}")
-
-    match Storage.load!(key) {
-        Ok(data) => {
-            Logger.info!("Successfully loaded data for user: ${user_id}")
-            Ok(data)
-        }
-        Err(NotFound) => {
-            Logger.error!("User not found: ${user_id}")
-            Err("User not found")
-        }
-        Err(PermissionDenied) => {
-            Logger.error!("Permission denied for user: ${user_id}")
-            Err("Permission denied")
-        }
-        Err(Other(msg)) => {
-            Logger.error!("Error loading user: ${msg}")
-            Err(msg)
-        }
-        # Catch-all for potential ABI mismatches
-        _ => {
-            Logger.warn!("Storage result pattern mismatch for user: ${user_id}")
-            Err("Storage error")
-        }
-    }
+# Silent writer - does nothing (useful for suppressing output)
+NullWriter := [NullWriter].{
+    write! = |_self, _msg| {}
 }
 
 # =============================================================================
-# Example 3: Custom Logger Wrapper
+# Generic Function with Injected Writer
 # =============================================================================
-# You can create wrapper types that add prefixes or other behavior
 
-PrefixLogger := [PrefixLogger(Str)].{
-    info! = |self, msg| match self {
-        PrefixLogger(prefix) => Logger.info!("[${prefix}] ${msg}")
-    }
-
-    debug! = |self, msg| match self {
-        PrefixLogger(prefix) => Logger.debug!("[${prefix}] ${msg}")
-    }
-
-    error! = |self, msg| match self {
-        PrefixLogger(prefix) => Logger.error!("[${prefix}] ${msg}")
-    }
-
-    warn! = |self, msg| match self {
-        PrefixLogger(prefix) => Logger.warn!("[${prefix}] ${msg}")
-    }
-
-    log! = |self, msg| match self {
-        PrefixLogger(prefix) => Logger.log!("[${prefix}] ${msg}")
-    }
+# This function works with ANY type that has a write! method
+say_hello! : writer, Str => {}
+    where [writer.write! : writer, Str => {}]
+say_hello! = |writer, name| {
+    writer.write!("Hello, ${name}!")
 }
 
-create_prefix_logger : Str -> PrefixLogger
-create_prefix_logger = |prefix| PrefixLogger(prefix)
-
-# =============================================================================
-# Example 4: Mock Logger for Testing
-# =============================================================================
-# A logger that outputs to stdout instead of the platform logger
-
-MockLogger := [].{
-    log! = |msg| Stdout.line!("[MOCK] ${msg}")
-    info! = |msg| Stdout.line!("[MOCK INFO] ${msg}")
-    error! = |msg| Stdout.line!("[MOCK ERROR] ${msg}")
-    warn! = |msg| Stdout.line!("[MOCK WARN] ${msg}")
-    debug! = |msg| Stdout.line!("[MOCK DEBUG] ${msg}")
+# Another generic function
+say_goodbye! : writer, Str => {}
+    where [writer.write! : writer, Str => {}]
+say_goodbye! = |writer, name| {
+    writer.write!("Goodbye, ${name}!")
 }
 
 # =============================================================================
-# Example 5: Service Pattern
+# Storage Types - Different storage implementations
 # =============================================================================
-# Encapsulate related operations in a service
 
-UserService := [UserService(Str)].{
-    get_name = |self| match self {
-        UserService(name) => name
-    }
+# Real storage using platform Storage
+FileStorage := [FileStorage].{
+    save! = |_self, key, value| Storage.save!(key, value)
 }
 
-create_user_service : Str -> UserService
-create_user_service = |name| UserService(name)
-
-user_service_register! : UserService, Str, Str => Try({}, Str)
-user_service_register! = |service, user_id, user_data| {
-    svc_name = service.get_name()
-    Logger.info!("[${svc_name}] Attempting to register user: ${user_id}")
-
-    key = "user:${user_id}"
-    if Storage.exists!(key) {
-        Logger.warn!("[${svc_name}] User already exists: ${user_id}")
-        Err("User already exists")
-    } else {
-        match Storage.save!(key, user_data) {
-            Ok({}) => {
-                Logger.info!("[${svc_name}] Successfully registered user: ${user_id}")
-                Ok({})
-            }
-            Err(err) => {
-                Logger.error!("[${svc_name}] Failed to register user: ${err}")
-                Err(err)
-            }
-            # Catch-all for potential ABI mismatches
-            _ => {
-                Logger.warn!("[${svc_name}] Storage result pattern mismatch for user: ${user_id}")
-                Err("Storage error")
-            }
-        }
-    }
-}
-
-user_service_get! : UserService, Str => Try(Str, Str)
-user_service_get! = |service, user_id| {
-    svc_name = service.get_name()
-    Logger.info!("[${svc_name}] Fetching user: ${user_id}")
-
-    key = "user:${user_id}"
-    match Storage.load!(key) {
-        Ok(data) => {
-            Logger.info!("[${svc_name}] Found user: ${user_id}")
-            Ok(data)
-        }
-        Err(NotFound) => {
-            Logger.warn!("[${svc_name}] User not found: ${user_id}")
-            Err("User not found")
-        }
-        Err(PermissionDenied) => {
-            Logger.error!("[${svc_name}] Permission denied accessing user: ${user_id}")
-            Err("Permission denied")
-        }
-        Err(Other(msg)) => {
-            Logger.error!("[${svc_name}] Error fetching user: ${msg}")
-            Err(msg)
-        }
-        # Catch-all for potential ABI mismatches
-        _ => {
-            Logger.warn!("[${svc_name}] Storage result pattern mismatch for user: ${user_id}")
-            Err("Storage error")
-        }
-    }
+# Mock storage for testing - always succeeds
+MockStorage := [MockStorage].{
+    save! = |_self, _key, _value| Ok({})
 }
 
 # =============================================================================
-# Example 6: Data Processing Pipeline
+# Generic Function with Injected Storage
 # =============================================================================
 
-DataProcessor := [DataProcessor(Str)].{
-    get_name = |self| match self {
-        DataProcessor(name) => name
-    }
-}
-
-create_processor : Str -> DataProcessor
-create_processor = |name| DataProcessor(name)
-
-# Simple transformation: add prefix and suffix
-transform_data : Str -> Str
-transform_data = |s| {
-    "<<${s}>>"
-}
-
-process_pipeline! : DataProcessor, Str, Str => Try(Str, Str)
-process_pipeline! = |processor, input_key, output_key| {
-    proc_name = processor.get_name()
-
-    Logger.info!("[${proc_name}] Starting pipeline")
-    Logger.debug!("[${proc_name}] Input: ${input_key}, Output: ${output_key}")
-
-    match Storage.load!(input_key) {
-        Ok(data) => {
-            Logger.info!("[${proc_name}] Step 1: Loaded data")
-            transformed = transform_data(data)
-            Logger.debug!("[${proc_name}] Step 2: Transformed to: ${transformed}")
-
-            match Storage.save!(output_key, transformed) {
-                Ok({}) => {
-                    Logger.info!("[${proc_name}] Step 3: Saved result")
-                    Logger.info!("[${proc_name}] Pipeline completed successfully")
-                    Ok(transformed)
-                }
-                Err(err) => {
-                    Logger.error!("[${proc_name}] Failed to save: ${err}")
-                    Err("Save failed")
-                }
-            }
-        }
-        Err(NotFound) => {
-            Logger.error!("[${proc_name}] Input not found: ${input_key}")
-            Err("Input not found")
-        }
-        Err(PermissionDenied) => {
-            Logger.error!("[${proc_name}] Permission denied")
-            Err("Permission denied")
-        }
-        Err(Other(msg)) => {
-            Logger.error!("[${proc_name}] Error: ${msg}")
-            Err(msg)
-        }
-        # Catch-all for potential ABI mismatches
-        _ => {
-            Logger.warn!("[${proc_name}] Storage result pattern mismatch")
-            Err("Storage error")
-        }
-    }
+store_value! : storage, Str, Str => Try({}, Str)
+    where [storage.save! : storage, Str, Str => Try({}, Str)]
+store_value! = |storage, key, value| {
+    storage.save!(key, value)
 }
 
 # =============================================================================
-# Main Function - Demonstrate All Examples
+# Main - Demonstrate Dependency Injection
 # =============================================================================
 
 main! = |_args| {
     Stdout.line!("=== Dependency Injection Examples ===")
     Stdout.line!("")
 
-    # Example 1: Simple logging
-    Stdout.line!("Example 1: Direct Platform Type Usage")
-    Stdout.line!("--------------------------------------")
-    greet_with_logging!("Alice")
-    _result1 = process_request!("req-12345")
-    _result2 = process_request!("")
+    # Create writer instances - note the type annotation and value assignment
+    console : ConsoleWriter
+    console = ConsoleWriter
+
+    prefixed : PrefixedWriter
+    prefixed = PrefixedWriter("APP")
+
+    tester : TestWriter
+    tester = TestWriter
+
+    silent : NullWriter
+    silent = NullWriter
+
+    # Example 1: Same function, different writers
+    Stdout.line!("Example 1: Same Function, Different Writers")
+    Stdout.line!("--------------------------------------------")
+
+    Stdout.line!("With ConsoleWriter:")
+    say_hello!(console, "Alice")
+
+    Stdout.line!("With PrefixedWriter:")
+    say_hello!(prefixed, "Bob")
+
+    Stdout.line!("With TestWriter:")
+    say_hello!(tester, "Charlie")
+
+    Stdout.line!("With NullWriter (silent):")
+    say_hello!(silent, "Diana")
+    Stdout.line!("  (no output above - that's the point!)")
     Stdout.line!("")
 
-    # Example 2: Storage operations
-    Stdout.line!("Example 2: Storage Operations")
-    Stdout.line!("------------------------------")
-    _save_result = save_user_data!("user-001", "Alice Johnson")
-    _load_result1 = load_user_data!("user-001")
-    _load_result2 = load_user_data!("nonexistent")
+    # Example 2: Multiple calls with same writer
+    Stdout.line!("Example 2: Conversation with Injected Writer")
+    Stdout.line!("---------------------------------------------")
+
+    say_hello!(console, "World")
+    say_goodbye!(console, "World")
     Stdout.line!("")
 
-    # Example 3: Custom prefix logger
-    Stdout.line!("Example 3: Custom Prefix Logger")
-    Stdout.line!("--------------------------------")
-    app_logger = create_prefix_logger("APP")
-    _log1 = app_logger.info!("Application started")
-    _log2 = app_logger.debug!("Debug message from app")
+    Stdout.line!("Same conversation with PrefixedWriter:")
+    say_hello!(prefixed, "World")
+    say_goodbye!(prefixed, "World")
     Stdout.line!("")
 
-    # Example 4: Mock logger
-    Stdout.line!("Example 4: Mock Logger")
-    Stdout.line!("-----------------------")
-    MockLogger.info!("This is a mock log message")
-    MockLogger.error!("This is a mock error")
+    # Example 3: Storage injection
+    Stdout.line!("Example 3: Storage Injection")
+    Stdout.line!("-----------------------------")
+
+    real_storage : FileStorage
+    real_storage = FileStorage
+
+    mock_storage : MockStorage
+    mock_storage = MockStorage
+
+    Stdout.line!("Saving with real storage:")
+    _r1 = store_value!(real_storage, "user:alice", "Alice Smith")
+    Stdout.line!("  Saved to .roc_storage/user:alice")
+
+    Stdout.line!("Saving with mock storage:")
+    _r2 = store_value!(mock_storage, "user:bob", "Bob Jones")
+    Stdout.line!("  Mock storage always succeeds (no file created)")
     Stdout.line!("")
 
-    # Example 5: User Service
-    Stdout.line!("Example 5: User Service Pattern")
-    Stdout.line!("--------------------------------")
-    user_service = create_user_service("UserService")
-    _reg_result1 = user_service_register!(user_service, "alice", "Alice Johnson, age 30")
-    _reg_result2 = user_service_register!(user_service, "bob", "Bob Smith, age 25")
-    _reg_result3 = user_service_register!(user_service, "alice", "duplicate")
-    _get_result1 = user_service_get!(user_service, "alice")
-    _get_result2 = user_service_get!(user_service, "charlie")
+    # Example 4: Different prefixes
+    Stdout.line!("Example 4: Multiple PrefixedWriter Instances")
+    Stdout.line!("--------------------------------------------")
+
+    app_writer : PrefixedWriter
+    app_writer = PrefixedWriter("APP")
+
+    db_writer : PrefixedWriter
+    db_writer = PrefixedWriter("DB")
+
+    api_writer : PrefixedWriter
+    api_writer = PrefixedWriter("API")
+
+    say_hello!(app_writer, "Application")
+    say_hello!(db_writer, "Database")
+    say_hello!(api_writer, "Service")
     Stdout.line!("")
 
-    # Example 6: Data Processing Pipeline
-    Stdout.line!("Example 6: Data Processing Pipeline")
-    Stdout.line!("------------------------------------")
-    processor = create_processor("DataTransformer")
-    _save = Storage.save!("input-data", "hello world")
-    _pipeline = process_pipeline!(processor, "input-data", "output-data")
-
-    match Storage.load!("output-data") {
-        Ok(result) => Stdout.line!("Final result: ${result}")
-        Err(_) => Stdout.line!("Could not load result")
-        # Catch-all for potential ABI mismatches
-        _ => Stdout.line!("Storage result pattern mismatch")
-    }
-    Stdout.line!("")
-
+    # Summary
     Stdout.line!("=== Key Takeaways ===")
-    Stdout.line!("* Platform types (Logger, Storage) can be used directly")
-    Stdout.line!("* Create wrapper types for custom behavior (PrefixLogger)")
-    Stdout.line!("* Use service patterns to encapsulate related operations")
-    Stdout.line!("* Mock implementations enable testing")
+    Stdout.line!("1. Define wrapper types: TypeName := [TagName].{ method = |self, args| ... }")
+    Stdout.line!("2. Create instances with type annotation: x : TypeName; x = TagName")
+    Stdout.line!("3. Pass instances to generic functions")
+    Stdout.line!("4. Use 'where [type.method : type, Args => Ret]' for constraints")
+    Stdout.line!("5. Same function works with ANY type that satisfies the constraint")
     Stdout.line!("")
-    Stdout.line!("=== All Examples Complete ===")
+    Stdout.line!("=== Done ===")
 
     Ok({})
 }
