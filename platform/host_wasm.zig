@@ -104,17 +104,142 @@ fn hostedHttpGet(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callco
     _ = ops;
     _ = args_ptr;
     // WASM HTTP support depends on the runtime environment (browser fetch or WASI HTTP extension)
-    // For now, return empty string as HTTP is not available in standard WASI
-    const result: *RocStr = @ptrCast(@alignCast(ret_ptr));
-    result.* = RocStr.empty();
+    // For now, return empty response
+    const Result = extern struct {
+        responseBody: RocList,
+        requestUrl: RocStr,
+        statusCode: u16,
+    };
+    const result: *Result = @ptrCast(@alignCast(ret_ptr));
+    result.responseBody = RocList.empty();
+    result.requestUrl = RocStr.empty();
+    result.statusCode = 0;
+}
+
+fn hostedHttpGetBatch(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // WASM HTTP batch support not available - return empty list
+    const result: *RocList = @ptrCast(@alignCast(ret_ptr));
+    result.* = RocList.empty();
+}
+
+fn hostedLoggerDebug(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    std.debug.print("[DEBUG] {s}\n", .{args.str.asSlice()});
+}
+
+fn hostedLoggerError(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    std.debug.print("[ERROR] {s}\n", .{args.str.asSlice()});
+}
+
+fn hostedLoggerInfo(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    std.debug.print("[INFO] {s}\n", .{args.str.asSlice()});
+}
+
+fn hostedLoggerLog(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    std.debug.print("{s}\n", .{args.str.asSlice()});
+}
+
+fn hostedLoggerWarn(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = ret_ptr;
+    const Args = extern struct { str: RocStr };
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    std.debug.print("[WARN] {s}\n", .{args.str.asSlice()});
+}
+
+fn hostedStorageDelete(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // Storage not available in WASM
+    const Result = extern struct { payload: RocStr, discriminant: u8 };
+    const result: *Result = @ptrCast(@alignCast(ret_ptr));
+    result.payload = RocStr.empty();
+    result.discriminant = 0; // Err
+}
+
+fn hostedStorageExists(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // Storage not available in WASM
+    const result: *bool = @ptrCast(@alignCast(ret_ptr));
+    result.* = false;
+}
+
+fn hostedStorageList(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // Storage not available in WASM
+    const result: *RocList = @ptrCast(@alignCast(ret_ptr));
+    result.* = RocList.empty();
+}
+
+fn hostedStorageLoad(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // Storage not available in WASM
+    const Result = extern struct {
+        payload: extern struct { ok_str: RocStr, err: RocStr },
+        discriminant: u8,
+    };
+    const result: *Result = @ptrCast(@alignCast(ret_ptr));
+    result.payload.ok_str = RocStr.empty();
+    result.payload.err = RocStr.empty();
+    result.discriminant = 0; // Err
+}
+
+fn hostedStorageSave(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // Storage not available in WASM
+    const Result = extern struct { payload: RocStr, discriminant: u8 };
+    const result: *Result = @ptrCast(@alignCast(ret_ptr));
+    result.payload = RocStr.empty();
+    result.discriminant = 0; // Err
+}
+
+fn hostedTimeNanos(ops: *RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+    // WASM doesn't have high-resolution timing, return 0
+    const result: *u64 = @ptrCast(@alignCast(ret_ptr));
+    result.* = 0;
 }
 
 const hosted_function_ptrs = [_]builtins.host_abi.HostedFn{
     hostedHttpGet, // Http.get! (index 0)
-    hostedRandomSeedU64, // Random.seed_u64! (index 1)
-    hostedStderrLine, // Stderr.line! (index 2)
-    hostedStdinLine, // Stdin.line! (index 3)
-    hostedStdoutLine, // Stdout.line! (index 4)
+    hostedHttpGetBatch, // Http.get_batch! (index 1)
+    hostedLoggerDebug, // Logger.debug! (index 2)
+    hostedLoggerError, // Logger.error! (index 3)
+    hostedLoggerInfo, // Logger.info! (index 4)
+    hostedLoggerLog, // Logger.log! (index 5)
+    hostedLoggerWarn, // Logger.warn! (index 6)
+    hostedRandomSeedU64, // Random.seed_u64! (index 7)
+    hostedStderrLine, // Stderr.line! (index 8)
+    hostedStdinLine, // Stdin.line! (index 9)
+    hostedStdoutLine, // Stdout.line! (index 10)
+    hostedStorageDelete, // Storage.delete! (index 11)
+    hostedStorageExists, // Storage.exists! (index 12)
+    hostedStorageList, // Storage.list! (index 13)
+    hostedStorageLoad, // Storage.load! (index 14)
+    hostedStorageSave, // Storage.save! (index 15)
+    hostedTimeNanos, // Time.nanos! (index 16)
 };
 
 extern fn roc__main_for_host(ops: *RocOps, ret_ptr: *anyopaque, arg_ptr: ?*anyopaque) callconv(.c) void;

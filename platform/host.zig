@@ -454,13 +454,12 @@ fn getAsSlice(roc_str: *const RocStr) []const u8 {
 }
 
 fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    // Simplified response without Dict fields
+    // Fields sorted by alignment (descending) then alphabetically
     const HttpResponse = extern struct {
-        // Fields must be in alphabetical order for Roc
-        requestHeaders: RocDict,
-        requestUrl: RocStr,
-        responseBody: RocList,
-        responseHeaders: RocDict,
-        statusCode: u16,
+        requestUrl: RocStr, // 24 bytes, align 8
+        responseBody: RocList, // 24 bytes, align 8
+        statusCode: u16, // 2 bytes, align 2
     };
 
     const Args = extern struct { url: RocStr };
@@ -473,11 +472,12 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
 
     const result: *HttpResponse = @ptrCast(@alignCast(ret_ptr));
 
+    // Clone the URL for returning (interpreter may free the original)
+    const cloned_url = request_url.clone(ops);
+
     const uri = std.Uri.parse(url_slice) catch {
-        result.requestUrl = RocStr.empty();
+        result.requestUrl = cloned_url;
         result.responseBody = RocList.empty();
-        result.requestHeaders = emptyDict();
-        result.responseHeaders = emptyDict();
         result.statusCode = 0;
         return;
     };
@@ -487,73 +487,224 @@ fn hostedHttpGet(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: 
 
     var redirect_buffer: [8 * 1024]u8 = undefined;
     var req = client.request(.GET, uri, .{}) catch {
-        result.requestUrl = request_url;
+        result.requestUrl = cloned_url;
         result.responseBody = RocList.empty();
-        result.requestHeaders = emptyDict();
-        result.responseHeaders = emptyDict();
         result.statusCode = 0;
         return;
     };
     defer req.deinit();
 
     req.sendBodiless() catch {
-        result.requestUrl = request_url;
+        result.requestUrl = cloned_url;
         result.responseBody = RocList.empty();
-        result.requestHeaders = emptyDict();
-        result.responseHeaders = emptyDict();
         result.statusCode = 0;
         return;
     };
+
     var response = req.receiveHead(&redirect_buffer) catch {
-        result.requestUrl = request_url;
+        result.requestUrl = cloned_url;
         result.responseBody = RocList.empty();
-        result.requestHeaders = emptyDict();
-        result.responseHeaders = emptyDict();
         result.statusCode = 0;
         return;
     };
 
-    // Collect response headers
-    var header_names: [64][]const u8 = undefined;
-    var header_values: [64][]const u8 = undefined;
-    var header_count: usize = 0;
-
-    var headers = response.head.iterateHeaders();
-    while (headers.next()) |header| {
-        if (header_count < 64) {
-            header_names[header_count] = header.name;
-            header_values[header_count] = header.value;
-            header_count += 1;
-        }
-    }
-
-    var body_list = std.ArrayListUnmanaged(u8){};
+    var body_list: std.ArrayList(u8) = .{};
     defer body_list.deinit(allocator);
 
-    var body_collector = BodyCollector.init(&body_list, allocator, 10 * 1024 * 1024);
-
-    const body_writer = &body_collector.writer_instance;
-
     var transfer_buffer: [4096]u8 = undefined;
-    var decompress: std.http.Decompress = undefined;
-    var decompress_buffer: [64 * 1024]u8 = undefined;
-    var reader = response.readerDecompressing(&transfer_buffer, &decompress, &decompress_buffer);
+    const reader = response.reader(&transfer_buffer);
+    reader.appendRemainingUnlimited(allocator, &body_list) catch {};
 
-    while (true) {
-        var read_buf: [4096]u8 = undefined;
-        const n = reader.readSliceShort(&read_buf) catch break;
-        if (n == 0) break;
-        body_writer.writeAll(read_buf[0..n]) catch break;
-    }
-
-    // Collect response body
     const body_bytes = body_list.items;
 
-    result.requestUrl = request_url;
+    result.requestUrl = cloned_url;
     result.responseBody = if (body_bytes.len > 0) RocList.fromSlice(u8, body_bytes, false, ops) else RocList.empty();
-    result.requestHeaders = emptyDict();
-    result.responseHeaders = buildDictFromHeaders(header_names[0..header_count], header_values[0..header_count], ops);
     result.statusCode = @intFromEnum(response.head.status);
+}
+
+/// Thread context for parallel HTTP fetching
+const HttpFetchContext = struct {
+    url_slice: []const u8,
+    cloned_url: RocStr,
+    response_body: RocList,
+    status_code: u16,
+    ops: *builtins.host_abi.RocOps,
+    allocator: std.mem.Allocator,
+};
+
+/// Worker function for fetching a single URL in a thread
+fn httpFetchWorker(ctx: *HttpFetchContext) void {
+    const uri = std.Uri.parse(ctx.url_slice) catch {
+        ctx.response_body = RocList.empty();
+        ctx.status_code = 0;
+        return;
+    };
+
+    var client: std.http.Client = .{ .allocator = ctx.allocator };
+    defer client.deinit();
+
+    var req = client.request(.GET, uri, .{}) catch {
+        ctx.response_body = RocList.empty();
+        ctx.status_code = 0;
+        return;
+    };
+    defer req.deinit();
+
+    req.sendBodiless() catch {
+        ctx.response_body = RocList.empty();
+        ctx.status_code = 0;
+        return;
+    };
+
+    var redirect_buffer: [8 * 1024]u8 = undefined;
+    var response = req.receiveHead(&redirect_buffer) catch {
+        ctx.response_body = RocList.empty();
+        ctx.status_code = 0;
+        return;
+    };
+
+    var body_list: std.ArrayList(u8) = .{};
+    defer body_list.deinit(ctx.allocator);
+
+    var transfer_buffer: [4096]u8 = undefined;
+    const reader = response.reader(&transfer_buffer);
+    reader.appendRemainingUnlimited(ctx.allocator, &body_list) catch {};
+
+    const body_bytes = body_list.items;
+
+    ctx.response_body = if (body_bytes.len > 0) RocList.fromSlice(u8, body_bytes, false, ctx.ops) else RocList.empty();
+    ctx.status_code = @intFromEnum(response.head.status);
+}
+
+/// Hosted function: Http.get_batch!
+/// Fetches multiple URLs in parallel using threads
+/// Takes List(Str) and returns List({ requestUrl: Str, responseBody: List(U8), statusCode: U16 })
+fn hostedHttpGetBatch(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const HttpResponse = extern struct {
+        requestUrl: RocStr,
+        responseBody: RocList,
+        statusCode: u16,
+    };
+
+    const Args = extern struct { urls: RocList };
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    const urls_list = args.urls;
+
+    const host: *HostEnv = @ptrCast(@alignCast(ops.env));
+    const allocator = host.gpa.allocator();
+
+    const result: *RocList = @ptrCast(@alignCast(ret_ptr));
+
+    const url_count = urls_list.len();
+    if (url_count == 0) {
+        result.* = RocList.empty();
+        return;
+    }
+
+    // Get pointers to URL strings
+    const url_ptrs = urls_list.elements(RocStr) orelse {
+        result.* = RocList.empty();
+        return;
+    };
+
+    // Allocate contexts for each URL
+    const contexts = allocator.alloc(HttpFetchContext, url_count) catch {
+        result.* = RocList.empty();
+        return;
+    };
+    defer allocator.free(contexts);
+
+    // Allocate space for URL slices (need to copy since RocStr might be small-string optimized)
+    const url_slices = allocator.alloc([]const u8, url_count) catch {
+        result.* = RocList.empty();
+        return;
+    };
+    defer allocator.free(url_slices);
+
+    // Initialize contexts
+    for (0..url_count) |i| {
+        const url_str = &url_ptrs[i];
+        url_slices[i] = getAsSlice(url_str);
+        contexts[i] = .{
+            .url_slice = url_slices[i],
+            .cloned_url = url_str.clone(ops),
+            .response_body = RocList.empty(),
+            .status_code = 0,
+            .ops = ops,
+            .allocator = allocator,
+        };
+    }
+
+    // Spawn threads for parallel fetching (limit to 16 concurrent)
+    const max_threads = @min(url_count, 16);
+    const threads = allocator.alloc(std.Thread, max_threads) catch {
+        // Fallback to sequential if thread allocation fails
+        for (0..url_count) |i| {
+            httpFetchWorker(&contexts[i]);
+        }
+        // Build result list
+        const responses = allocator.alloc(HttpResponse, url_count) catch {
+            result.* = RocList.empty();
+            return;
+        };
+        defer allocator.free(responses);
+
+        for (0..url_count) |i| {
+            responses[i] = .{
+                .requestUrl = contexts[i].cloned_url,
+                .responseBody = contexts[i].response_body,
+                .statusCode = contexts[i].status_code,
+            };
+        }
+
+        result.* = RocList.fromSlice(HttpResponse, responses, false, ops);
+        return;
+    };
+    defer allocator.free(threads);
+
+    // Spawn threads in batches
+    var spawned: usize = 0;
+    var completed: usize = 0;
+
+    while (completed < url_count) {
+        // Spawn up to max_threads
+        const batch_start = completed;
+        const batch_end = @min(completed + max_threads, url_count);
+
+        for (batch_start..batch_end) |i| {
+            threads[spawned] = std.Thread.spawn(.{}, httpFetchWorker, .{&contexts[i]}) catch {
+                // If spawn fails, do it synchronously
+                httpFetchWorker(&contexts[i]);
+                continue;
+            };
+            spawned += 1;
+        }
+
+        // Wait for this batch to complete
+        for (0..spawned) |t| {
+            threads[t].join();
+        }
+
+        completed = batch_end;
+        spawned = 0;
+    }
+
+    // Build result list
+    const responses = allocator.alloc(HttpResponse, url_count) catch {
+        result.* = RocList.empty();
+        return;
+    };
+    defer allocator.free(responses);
+
+    for (0..url_count) |i| {
+        responses[i] = .{
+            .requestUrl = contexts[i].cloned_url,
+            .responseBody = contexts[i].response_body,
+            .statusCode = contexts[i].status_code,
+        };
+    }
+
+    result.* = RocList.fromSlice(HttpResponse, responses, false, ops);
 }
 
 /// Hosted function: Random.seed_u64! (index 1 - sorted alphabetically)
@@ -933,24 +1084,37 @@ fn hostedStorageSave(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_p
     result.discriminant = 1; // Ok
 }
 
+/// Hosted function: Time.nanos!
+/// Returns U64 nanoseconds since an arbitrary epoch (for timing/profiling)
+fn hostedTimeNanos(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    _ = ops;
+    _ = args_ptr;
+
+    const nanos: u64 = @intCast(std.time.nanoTimestamp());
+    const result: *u64 = @ptrCast(@alignCast(ret_ptr));
+    result.* = nanos;
+}
+
 /// Array of hosted function pointers, sorted alphabetically by fully-qualified name
 /// These correspond to the hosted functions defined in the platform Type Modules
 const hosted_function_ptrs = [_]builtins.host_abi.HostedFn{
     hostedHttpGet, // Http.get! (index 0)
-    hostedLoggerDebug, // Logger.debug! (index 1)
-    hostedLoggerError, // Logger.error! (index 2)
-    hostedLoggerInfo, // Logger.info! (index 3)
-    hostedLoggerLog, // Logger.log! (index 4)
-    hostedLoggerWarn, // Logger.warn! (index 5)
-    hostedRandomSeedU64, // Random.seed_u64! (index 6)
-    hostedStderrLine, // Stderr.line! (index 7)
-    hostedStdinLine, // Stdin.line! (index 8)
-    hostedStdoutLine, // Stdout.line! (index 9)
-    hostedStorageDelete, // Storage.delete! (index 10)
-    hostedStorageExists, // Storage.exists! (index 11)
-    hostedStorageList, // Storage.list! (index 12)
-    hostedStorageLoad, // Storage.load! (index 13)
-    hostedStorageSave, // Storage.save! (index 14)
+    hostedHttpGetBatch, // Http.get_batch! (index 1)
+    hostedLoggerDebug, // Logger.debug! (index 2)
+    hostedLoggerError, // Logger.error! (index 3)
+    hostedLoggerInfo, // Logger.info! (index 4)
+    hostedLoggerLog, // Logger.log! (index 5)
+    hostedLoggerWarn, // Logger.warn! (index 6)
+    hostedRandomSeedU64, // Random.seed_u64! (index 7)
+    hostedStderrLine, // Stderr.line! (index 8)
+    hostedStdinLine, // Stdin.line! (index 9)
+    hostedStdoutLine, // Stdout.line! (index 10)
+    hostedStorageDelete, // Storage.delete! (index 11)
+    hostedStorageExists, // Storage.exists! (index 12)
+    hostedStorageList, // Storage.list! (index 13)
+    hostedStorageLoad, // Storage.load! (index 14)
+    hostedStorageSave, // Storage.save! (index 15)
+    hostedTimeNanos, // Time.nanos! (index 16)
 };
 
 /// Platform host entrypoint
