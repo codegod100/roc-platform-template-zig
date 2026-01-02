@@ -1,6 +1,6 @@
 platform ""
     requires {} { main! : List(Str) => Try({}, [Exit(I32)]) }
-    exposes [Stdout, Stderr, Stdin, Random, Http, Logger, Storage, Time]
+    exposes [Stdout, Stderr, Stdin, Random, Http, Logger, Storage, Time, Json]
     packages {}
     provides { main_for_host!: "main_for_host" }
     targets: {
@@ -25,6 +25,7 @@ import Http
 import Logger
 import Storage
 import Time
+import Json
 
 
 main_for_host! : List(Str) => I32

@@ -1095,26 +1095,337 @@ fn hostedTimeNanos(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr
     result.* = nanos;
 }
 
+/// Hosted function: Json.parse_number_field!
+/// Extracts a number field value from JSON bytes
+fn hostedJsonParseNumberField(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const Args = extern struct {
+        json_bytes: RocList,
+        field_name: RocStr,
+    };
+
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    const json_ptr = args.json_bytes.elements(u8);
+    const json_len = args.json_bytes.len();
+    const json_slice: []const u8 = if (json_ptr) |ptr| ptr[0..json_len] else "";
+    const field_slice = args.field_name.asSlice();
+
+    const result: *RocStr = @ptrCast(@alignCast(ret_ptr));
+
+    // Build the key pattern: "field":
+    var key_buf: [256]u8 = undefined;
+    if (field_slice.len + 3 > key_buf.len) {
+        result.* = RocStr.empty();
+        return;
+    }
+    key_buf[0] = '"';
+    @memcpy(key_buf[1 .. 1 + field_slice.len], field_slice);
+    key_buf[1 + field_slice.len] = '"';
+    key_buf[2 + field_slice.len] = ':';
+    const key = key_buf[0 .. 3 + field_slice.len];
+
+    // Find the key in JSON
+    const pos = std.mem.indexOf(u8, json_slice, key) orelse {
+        result.* = RocStr.empty();
+        return;
+    };
+
+    // Skip to value start
+    var i = pos + key.len;
+    while (i < json_slice.len and (json_slice[i] == ' ' or json_slice[i] == '\t' or json_slice[i] == '\n')) : (i += 1) {}
+
+    // Extract digits
+    const start = i;
+    while (i < json_slice.len and json_slice[i] >= '0' and json_slice[i] <= '9') : (i += 1) {}
+
+    if (i > start) {
+        result.* = RocStr.init(json_slice[start..i].ptr, i - start, ops);
+    } else {
+        result.* = RocStr.empty();
+    }
+}
+
+/// Hosted function: Json.parse_string_field!
+/// Extracts a string field value from JSON bytes
+fn hostedJsonParseStringField(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const Args = extern struct {
+        json_bytes: RocList,
+        field_name: RocStr,
+    };
+
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    const json_ptr = args.json_bytes.elements(u8);
+    const json_len = args.json_bytes.len();
+    const json_slice: []const u8 = if (json_ptr) |ptr| ptr[0..json_len] else "";
+    const field_slice = args.field_name.asSlice();
+
+    const result: *RocStr = @ptrCast(@alignCast(ret_ptr));
+
+    // Build the key pattern: "field":"
+    var key_buf: [256]u8 = undefined;
+    if (field_slice.len + 4 > key_buf.len) {
+        result.* = RocStr.empty();
+        return;
+    }
+    key_buf[0] = '"';
+    @memcpy(key_buf[1 .. 1 + field_slice.len], field_slice);
+    key_buf[1 + field_slice.len] = '"';
+    key_buf[2 + field_slice.len] = ':';
+    key_buf[3 + field_slice.len] = '"';
+    const key = key_buf[0 .. 4 + field_slice.len];
+
+    // Find the key in JSON
+    const pos = std.mem.indexOf(u8, json_slice, key) orelse {
+        result.* = RocStr.empty();
+        return;
+    };
+
+    // Extract until closing quote (handle escapes)
+    var i = pos + key.len;
+    const start = i;
+    while (i < json_slice.len) : (i += 1) {
+        if (json_slice[i] == '\\' and i + 1 < json_slice.len) {
+            i += 1; // skip escaped char
+        } else if (json_slice[i] == '"') {
+            break;
+        }
+    }
+
+    if (i > start) {
+        result.* = RocStr.init(json_slice[start..i].ptr, i - start, ops);
+    } else {
+        result.* = RocStr.empty();
+    }
+}
+
+/// Hosted function: Json.parse_array_field!
+/// Extracts an array field from a JSON object and returns each element as raw bytes
+fn hostedJsonParseArrayField(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const Args = extern struct {
+        json_bytes: RocList,
+        field_name: RocStr,
+    };
+
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    const json_ptr = args.json_bytes.elements(u8);
+    const json_len = args.json_bytes.len();
+    const json_slice: []const u8 = if (json_ptr) |ptr| ptr[0..json_len] else "";
+    const field_name = args.field_name.asSlice();
+
+    const result: *RocList = @ptrCast(@alignCast(ret_ptr));
+
+    if (json_slice.len == 0 or field_name.len == 0) {
+        result.* = RocList.empty();
+        return;
+    }
+
+    const host: *HostEnv = @ptrCast(@alignCast(ops.env));
+    const allocator = host.gpa.allocator();
+
+    // Find the field: "fieldname":[
+    var search_pattern = allocator.alloc(u8, field_name.len + 4) catch {
+        result.* = RocList.empty();
+        return;
+    };
+    defer allocator.free(search_pattern);
+    search_pattern[0] = '"';
+    @memcpy(search_pattern[1 .. 1 + field_name.len], field_name);
+    search_pattern[1 + field_name.len] = '"';
+    search_pattern[2 + field_name.len] = ':';
+    search_pattern[3 + field_name.len] = '[';
+
+    // Find the pattern in json_slice
+    var array_start: ?usize = null;
+    outer: for (0..json_slice.len - search_pattern.len + 1) |i| {
+        for (0..search_pattern.len) |j| {
+            if (json_slice[i + j] != search_pattern[j]) continue :outer;
+        }
+        array_start = i + search_pattern.len;
+        break;
+    }
+
+    if (array_start == null) {
+        result.* = RocList.empty();
+        return;
+    }
+
+    // Parse array elements - each element is a JSON object {...}
+    // First pass: count elements
+    var element_count: usize = 0;
+    var i = array_start.?;
+    while (i < json_slice.len) {
+        while (i < json_slice.len and (json_slice[i] == ' ' or json_slice[i] == '\n' or json_slice[i] == '\r' or json_slice[i] == '\t' or json_slice[i] == ',')) {
+            i += 1;
+        }
+        if (i >= json_slice.len) break;
+        if (json_slice[i] == ']') break;
+
+        if (json_slice[i] == '{') {
+            var depth: usize = 1;
+            var in_string = false;
+            var escape_next = false;
+            i += 1;
+            while (i < json_slice.len and depth > 0) {
+                const c = json_slice[i];
+                if (escape_next) {
+                    escape_next = false;
+                } else if (c == '\\' and in_string) {
+                    escape_next = true;
+                } else if (c == '"') {
+                    in_string = !in_string;
+                } else if (!in_string) {
+                    if (c == '{') depth += 1;
+                    if (c == '}') depth -= 1;
+                }
+                i += 1;
+            }
+            element_count += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    if (element_count == 0) {
+        result.* = RocList.empty();
+        return;
+    }
+
+    // Allocate array for elements
+    var elements = allocator.alloc(RocList, element_count) catch {
+        result.* = RocList.empty();
+        return;
+    };
+    defer allocator.free(elements);
+
+    // Second pass: extract elements
+    var elem_idx: usize = 0;
+    i = array_start.?;
+    while (i < json_slice.len and elem_idx < element_count) {
+        while (i < json_slice.len and (json_slice[i] == ' ' or json_slice[i] == '\n' or json_slice[i] == '\r' or json_slice[i] == '\t' or json_slice[i] == ',')) {
+            i += 1;
+        }
+        if (i >= json_slice.len) break;
+        if (json_slice[i] == ']') break;
+
+        if (json_slice[i] == '{') {
+            const obj_start = i;
+            var depth: usize = 1;
+            var in_string = false;
+            var escape_next = false;
+            i += 1;
+            while (i < json_slice.len and depth > 0) {
+                const c = json_slice[i];
+                if (escape_next) {
+                    escape_next = false;
+                } else if (c == '\\' and in_string) {
+                    escape_next = true;
+                } else if (c == '"') {
+                    in_string = !in_string;
+                } else if (!in_string) {
+                    if (c == '{') depth += 1;
+                    if (c == '}') depth -= 1;
+                }
+                i += 1;
+            }
+            const obj_slice = json_slice[obj_start..i];
+            elements[elem_idx] = RocList.fromSlice(u8, obj_slice, false, ops);
+            elem_idx += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    result.* = RocList.fromSlice(RocList, elements[0..elem_idx], false, ops);
+}
+
+/// Hosted function: Json.parse_u64_array!
+/// Parses a JSON array of integers like [123, 456, 789], limited to max_count
+fn hostedJsonParseU64Array(ops: *builtins.host_abi.RocOps, ret_ptr: *anyopaque, args_ptr: *anyopaque) callconv(.c) void {
+    const Args = extern struct {
+        json_bytes: RocList,
+        max_count: u64,
+    };
+
+    const args: *Args = @ptrCast(@alignCast(args_ptr));
+    const json_ptr = args.json_bytes.elements(u8);
+    const json_len = args.json_bytes.len();
+    const json_slice: []const u8 = if (json_ptr) |ptr| ptr[0..json_len] else "";
+    const max_count = args.max_count;
+
+    const result: *RocList = @ptrCast(@alignCast(ret_ptr));
+
+    if (json_slice.len == 0 or max_count == 0) {
+        result.* = RocList.empty();
+        return;
+    }
+
+    // Allocate result array
+    const host: *HostEnv = @ptrCast(@alignCast(ops.env));
+    const allocator = host.gpa.allocator();
+
+    var numbers = allocator.alloc(u64, @intCast(max_count)) catch {
+        result.* = RocList.empty();
+        return;
+    };
+    defer allocator.free(numbers);
+
+    var count: usize = 0;
+    var current_num: u64 = 0;
+    var in_number = false;
+
+    for (json_slice) |byte| {
+        if (count >= max_count) break;
+
+        if (byte >= '0' and byte <= '9') {
+            current_num = current_num * 10 + (byte - '0');
+            in_number = true;
+        } else {
+            if (in_number) {
+                numbers[count] = current_num;
+                count += 1;
+                current_num = 0;
+                in_number = false;
+            }
+        }
+    }
+
+    // Handle last number if string doesn't end with comma/bracket
+    if (in_number and count < max_count) {
+        numbers[count] = current_num;
+        count += 1;
+    }
+
+    if (count == 0) {
+        result.* = RocList.empty();
+        return;
+    }
+
+    result.* = RocList.fromSlice(u64, numbers[0..count], false, ops);
+}
+
 /// Array of hosted function pointers, sorted alphabetically by fully-qualified name
 /// These correspond to the hosted functions defined in the platform Type Modules
 const hosted_function_ptrs = [_]builtins.host_abi.HostedFn{
     hostedHttpGet, // Http.get! (index 0)
     hostedHttpGetBatch, // Http.get_batch! (index 1)
-    hostedLoggerDebug, // Logger.debug! (index 2)
-    hostedLoggerError, // Logger.error! (index 3)
-    hostedLoggerInfo, // Logger.info! (index 4)
-    hostedLoggerLog, // Logger.log! (index 5)
-    hostedLoggerWarn, // Logger.warn! (index 6)
-    hostedRandomSeedU64, // Random.seed_u64! (index 7)
-    hostedStderrLine, // Stderr.line! (index 8)
-    hostedStdinLine, // Stdin.line! (index 9)
-    hostedStdoutLine, // Stdout.line! (index 10)
-    hostedStorageDelete, // Storage.delete! (index 11)
-    hostedStorageExists, // Storage.exists! (index 12)
-    hostedStorageList, // Storage.list! (index 13)
-    hostedStorageLoad, // Storage.load! (index 14)
-    hostedStorageSave, // Storage.save! (index 15)
-    hostedTimeNanos, // Time.nanos! (index 16)
+    hostedJsonParseArrayField, // Json.parse_array_field! (index 2)
+    hostedJsonParseNumberField, // Json.parse_number_field! (index 3)
+    hostedJsonParseStringField, // Json.parse_string_field! (index 4)
+    hostedJsonParseU64Array, // Json.parse_u64_array! (index 5)
+    hostedLoggerDebug, // Logger.debug! (index 6)
+    hostedLoggerError, // Logger.error! (index 7)
+    hostedLoggerInfo, // Logger.info! (index 8)
+    hostedLoggerLog, // Logger.log! (index 9)
+    hostedLoggerWarn, // Logger.warn! (index 10)
+    hostedRandomSeedU64, // Random.seed_u64! (index 11)
+    hostedStderrLine, // Stderr.line! (index 12)
+    hostedStdinLine, // Stdin.line! (index 13)
+    hostedStdoutLine, // Stdout.line! (index 14)
+    hostedStorageDelete, // Storage.delete! (index 15)
+    hostedStorageExists, // Storage.exists! (index 16)
+    hostedStorageList, // Storage.list! (index 17)
+    hostedStorageLoad, // Storage.load! (index 18)
+    hostedStorageSave, // Storage.save! (index 19)
+    hostedTimeNanos, // Time.nanos! (index 20)
 };
 
 /// Platform host entrypoint
